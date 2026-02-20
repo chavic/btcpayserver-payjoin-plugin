@@ -3,37 +3,36 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using BTCPayServer.Plugins.Payjoin.Models;
-using BTCPayServer.Services.Stores;
 using Microsoft.Extensions.Hosting;
 
 namespace BTCPayServer.Plugins.Payjoin.Services;
 
 public sealed class PayjoinDemoInitializer : IHostedService
 {
-    private const string PayjoinSettingsKey = "payjoin.settings";
     private readonly PayjoinDemoContext _context;
-    private readonly StoreRepository _storeRepository;
+    private readonly IPayjoinStoreSettingsRepository _settingsRepository;
 
-    public PayjoinDemoInitializer(PayjoinDemoContext context, StoreRepository storeRepository)
+    public PayjoinDemoInitializer(
+        PayjoinDemoContext context,
+        IPayjoinStoreSettingsRepository settingsRepository)
     {
         _context = context;
-        _storeRepository = storeRepository;
+        _settingsRepository = settingsRepository;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        var stores = await _storeRepository.GetStores().ConfigureAwait(false);
         var demoStores = new List<(string StoreId, PayjoinStoreSettings Settings)>();
+        var stores = await _settingsRepository.GetAllAsync().ConfigureAwait(false);
         foreach (var store in stores)
         {
-            var settings = await _storeRepository.GetSettingAsync<PayjoinStoreSettings>(store.Id, PayjoinSettingsKey)
-                .ConfigureAwait(false) ?? new PayjoinStoreSettings();
+            var settings = store.Settings;
             if (!settings.DemoMode)
             {
                 continue;
             }
 
-            demoStores.Add((store.Id, settings));
+            demoStores.Add((store.StoreId, settings));
         }
 
         if (demoStores.Count == 0)
@@ -41,30 +40,59 @@ public sealed class PayjoinDemoInitializer : IHostedService
             return;
         }
 
-        _context.Initialize();
-
         foreach (var demoStore in demoStores)
         {
-            var settings = demoStore.Settings;
-
-            if (_context.DirectoryUrl is not null)
-            {
-                settings.DirectoryUrl = _context.DirectoryUrl;
-            }
-
-            if (_context.OhttpRelayUrl is not null)
-            {
-                settings.OhttpRelayUrl = _context.OhttpRelayUrl;
-            }
-
-            await _storeRepository.UpdateSetting(demoStore.StoreId, PayjoinSettingsKey, settings).ConfigureAwait(false);
+            await InitializeDemoSettingsAsync(demoStore.StoreId, demoStore.Settings, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    public async Task<PayjoinStoreSettings> InitializeDemoSettingsAsync(
+        string storeId,
+        PayjoinStoreSettings settings,
+        CancellationToken cancellationToken)
+    {
+        if (settings is null)
+        {
+            throw new ArgumentNullException(nameof(settings));
+        }
+
+        if (!settings.DemoMode)
+        {
+            return settings;
+        }
+
+        if (!_context.IsReady)
+        {
+            try
+            {
+                _context.Initialize();
+            }
+            catch (InvalidOperationException)
+            {
+                return settings;
+            }
+            catch (System.Runtime.InteropServices.ExternalException)
+            {
+                return settings;
+            }
+        }
+
+        if (_context.DirectoryUrl is not null)
+        {
+            settings.DirectoryUrl = _context.DirectoryUrl;
+        }
+
+        if (_context.OhttpRelayUrl is not null)
+        {
+            settings.OhttpRelayUrl = _context.OhttpRelayUrl;
+        }
+
+        await _settingsRepository.SetAsync(storeId, settings).ConfigureAwait(false);
+        return settings;
     }
 
     public Task StopAsync(CancellationToken cancellationToken)
     {
         return Task.CompletedTask;
     }
-
-    
 }

@@ -17,33 +17,24 @@ public class UIPayJoinControllerTests
     }
 
     [Fact]
-    public void GetBip21ReturnsExpectedPayload()
+    public async Task GetBip21ReturnsBadRequestWhenInvoiceIdMissing()
     {
-        using var controller = new UIPayJoinController(null!);
+        using var controller = new UIPayJoinController(null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
 
-        var result = controller.GetBip21("invoice-1");
+        var result = await controller.GetBip21(" ", "standard", TestContext.Current.CancellationToken);
 
-        var jsonResult = Assert.IsType<JsonResult>(result);
-        Assert.NotNull(jsonResult.Value);
-
-        var valueType = jsonResult.Value!.GetType();
-        var bip21 = (string?)valueType.GetProperty("bip21")?.GetValue(jsonResult.Value);
-        var payjoinEnabled = (bool?)valueType.GetProperty("payjoinEnabled")?.GetValue(jsonResult.Value);
-
-        Assert.False(string.IsNullOrEmpty(bip21));
-        Assert.StartsWith("bitcoin:", bip21, StringComparison.OrdinalIgnoreCase);
-        Assert.True(payjoinEnabled);
+        Assert.IsType<BadRequestObjectResult>(result);
     }
 
     [Fact]
-    public void RunTestPaymentReturnsNotFoundWhenCheatModeDisabled()
+    public async Task RunTestPaymentReturnsNotFoundWhenCheatModeDisabled()
     {
-        using var controller = new UIPayJoinController(CreateEnvironment(false));
+        using var controller = new UIPayJoinController(CreateEnvironment(false), null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
 
-        var result = controller.RunTestPayment(new RunTestPaymentRequest
+        var result = await controller.RunTestPayment(new RunTestPaymentRequest
         {
             InvoiceId = "invoice-1"
-        });
+        }, TestContext.Current.CancellationToken);
 
         Assert.IsType<NotFoundResult>(result);
     }

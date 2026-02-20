@@ -4,7 +4,6 @@ using BTCPayServer.Abstractions.Models;
 using BTCPayServer.Client;
 using BTCPayServer.Plugins.Payjoin.Models;
 using BTCPayServer.Plugins.Payjoin.Services;
-using BTCPayServer.Services.Stores;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System;
@@ -16,24 +15,21 @@ namespace BTCPayServer.Plugins.Payjoin.Controllers;
 [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = Policies.CanViewStoreSettings)]
 public class UIStorePayjoinController : Controller
 {
-    private readonly StoreRepository _storeRepository;
     private readonly IPayjoinStoreSettingsRepository _settingsRepository;
-    private readonly PayjoinDemoContext _demoContext;
+    private readonly PayjoinDemoInitializer _demoInitializer;
 
     public UIStorePayjoinController(
-        StoreRepository storeRepository,
         IPayjoinStoreSettingsRepository settingsRepository,
-        PayjoinDemoContext demoContext)
+        PayjoinDemoInitializer demoInitializer)
     {
-        _storeRepository = storeRepository;
         _settingsRepository = settingsRepository;
-        _demoContext = demoContext;
+        _demoInitializer = demoInitializer;
     }
 
     [HttpGet("")]
     public async Task<IActionResult> Settings(string storeId)
     {
-        var store = HttpContext.GetStoreData() ?? await _storeRepository.FindStore(storeId).ConfigureAwait(false);
+        var store = HttpContext.GetStoreData();
         if (store is null)
         {
             return NotFound();
@@ -61,7 +57,7 @@ public class UIStorePayjoinController : Controller
         {
             return BadRequest();
         }
-        var store = HttpContext.GetStoreData() ?? await _storeRepository.FindStore(storeId).ConfigureAwait(false);
+        var store = HttpContext.GetStoreData();
         if (store is null)
         {
             return NotFound();
@@ -85,24 +81,15 @@ public class UIStorePayjoinController : Controller
 
         if (settings.DemoMode)
         {
-            _demoContext.Initialize();
-            if (_demoContext.DirectoryUrl is not null)
-            {
-                settings.DirectoryUrl = _demoContext.DirectoryUrl;
-            }
-
-            if (_demoContext.OhttpRelayUrl is not null)
-            {
-                settings.OhttpRelayUrl = _demoContext.OhttpRelayUrl;
-            }
+            settings = await _demoInitializer.InitializeDemoSettingsAsync(storeId, settings, HttpContext.RequestAborted)
+                .ConfigureAwait(false);
         }
         else
         {
             settings.DirectoryUrl = null;
             settings.OhttpRelayUrl = null;
+            await _settingsRepository.SetAsync(storeId, settings).ConfigureAwait(false);
         }
-
-        await _settingsRepository.SetAsync(storeId, settings).ConfigureAwait(false);
         TempData[WellKnownTempData.SuccessMessage] = "Payjoin settings saved.";
         return RedirectToAction(nameof(Settings), new { storeId });
     }
@@ -111,7 +98,7 @@ public class UIStorePayjoinController : Controller
     [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = Policies.CanModifyStoreSettings)]
     public async Task<IActionResult> ToggleDemoMode(string storeId, [FromForm] bool demoMode)
     {
-        var store = HttpContext.GetStoreData() ?? await _storeRepository.FindStore(storeId).ConfigureAwait(false);
+        var store = HttpContext.GetStoreData();
         if (store is null)
         {
             return NotFound();
@@ -121,16 +108,8 @@ public class UIStorePayjoinController : Controller
         settings.DemoMode = demoMode;
         if (settings.DemoMode)
         {
-            _demoContext.Initialize();
-            if (_demoContext.DirectoryUrl is not null)
-            {
-                settings.DirectoryUrl = _demoContext.DirectoryUrl;
-            }
-
-            if (_demoContext.OhttpRelayUrl is not null)
-            {
-                settings.OhttpRelayUrl = _demoContext.OhttpRelayUrl;
-            }
+            settings = await _demoInitializer.InitializeDemoSettingsAsync(storeId, settings, HttpContext.RequestAborted)
+                .ConfigureAwait(false);
         }
         else
         {

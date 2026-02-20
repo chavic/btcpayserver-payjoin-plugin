@@ -19,7 +19,12 @@ public class Plugin : BaseBTCPayServerPlugin
         applicationBuilder.AddUIExtension("checkout-end", "PayJoinCheckoutExtension");
         applicationBuilder.AddHostedService<ApplicationPartsLogger>();
         applicationBuilder.AddSingleton<PayjoinDemoContext>();
-        applicationBuilder.AddHostedService<PayjoinDemoInitializer>();
+        applicationBuilder.AddSingleton<PayjoinDemoInitializer>();
+        applicationBuilder.AddSingleton<PayjoinReceiverSessionStore>();
+        applicationBuilder.AddSingleton<PayjoinOhttpKeysProvider>();
+        applicationBuilder.AddSingleton<PayjoinBip21Service>();
+        applicationBuilder.AddHostedService<PayjoinReceiverPoller>();
+        applicationBuilder.AddHostedService(provider => provider.GetRequiredService<PayjoinDemoInitializer>());
         applicationBuilder.AddHostedService<PluginMigrationRunner>();
         applicationBuilder.AddSingleton<PayjoinPluginService>();
         applicationBuilder.AddSingleton<IPayjoinStoreSettingsRepository, PayjoinStoreSettingsRepository>();

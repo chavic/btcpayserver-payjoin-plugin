@@ -2,6 +2,7 @@ using BTCPayServer.Data;
 using BTCPayServer.Plugins.Payjoin.Models;
 using BTCPayServer.Services.Stores;
 using Newtonsoft.Json;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace BTCPayServer.Plugins.Payjoin.Services;
@@ -25,20 +26,19 @@ public sealed class PayjoinStoreSettingsRepository : IPayjoinStoreSettingsReposi
             return new PayjoinStoreSettings();
         }
 
-        var blob = store.GetStoreBlob();
-        if (blob.AdditionalData is null || !blob.AdditionalData.TryGetValue(Key, out var token) || token is null)
+        return ReadSettings(store);
+    }
+
+    public async Task<IReadOnlyList<(string StoreId, PayjoinStoreSettings Settings)>> GetAllAsync()
+    {
+        var stores = await _storeRepository.GetStores().ConfigureAwait(false);
+        var results = new List<(string StoreId, PayjoinStoreSettings Settings)>();
+        foreach (var store in stores)
         {
-            return new PayjoinStoreSettings();
+            results.Add((store.Id, ReadSettings(store)));
         }
 
-        try
-        {
-            return token.ToObject<PayjoinStoreSettings>() ?? new PayjoinStoreSettings();
-        }
-        catch (JsonException)
-        {
-            return new PayjoinStoreSettings();
-        }
+        return results;
     }
 
     public async Task SetAsync(string storeId, PayjoinStoreSettings settings)
@@ -54,5 +54,23 @@ public sealed class PayjoinStoreSettingsRepository : IPayjoinStoreSettingsReposi
         blob.AdditionalData[Key] = Newtonsoft.Json.Linq.JToken.FromObject(settings);
         store.SetStoreBlob(blob);
         await _storeRepository.UpdateStore(store).ConfigureAwait(false);
+    }
+
+    private static PayjoinStoreSettings ReadSettings(StoreData store)
+    {
+        var blob = store.GetStoreBlob();
+        if (blob.AdditionalData is null || !blob.AdditionalData.TryGetValue(Key, out var token) || token is null)
+        {
+            return new PayjoinStoreSettings();
+        }
+
+        try
+        {
+            return token.ToObject<PayjoinStoreSettings>() ?? new PayjoinStoreSettings();
+        }
+        catch (JsonException)
+        {
+            return new PayjoinStoreSettings();
+        }
     }
 }
