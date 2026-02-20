@@ -1,0 +1,204 @@
+@using BTCPayServer
+@using BTCPayServer.Abstractions.Extensions
+@using BTCPayServer.Client.Models
+@using BTCPayServer.Plugins.Payjoin.Services
+@using BTCPayServer.Services.Invoices
+@using Microsoft.AspNetCore.Routing
+@inject BTCPayServer.Services.Invoices.InvoiceRepository InvoiceRepository
+@inject IPayjoinStoreSettingsRepository StoreSettingsRepository
+@inject BTCPayServer.Services.BTCPayServerEnvironment Env
+
+@{
+    var httpContext = Context;
+    var invoiceId = httpContext.GetRouteValue("invoiceId")?.ToString();
+    if (string.IsNullOrEmpty(invoiceId))
+    {
+        invoiceId = httpContext.Request.Query["id"].ToString();
+    }
+
+    if (string.IsNullOrEmpty(invoiceId))
+    {
+        return;
+    }
+
+    var invoice = await InvoiceRepository.GetInvoice(invoiceId);
+    if (invoice is null)
+    {
+        return;
+    }
+
+    var status = invoice.GetInvoiceState().Status;
+    if (status != InvoiceStatus.New)
+    {
+        return;
+    }
+
+    var storeSettings = await StoreSettingsRepository.GetAsync(invoice.StoreId);
+    if (storeSettings is null)
+    {
+        return;
+    }
+
+    var payjoinEnabled = storeSettings.EnabledByDefault;
+
+    if (!payjoinEnabled || storeSettings.DirectoryUrl is null || storeSettings.OhttpRelayUrl is null)
+    {
+        return;
+    }
+
+    var endpoint = Url.Content($"~/plugins/payjoin/invoices/{Uri.EscapeDataString(invoiceId)}/bip21");
+}
+
+<div id="payjoin-toggle" data-endpoint="@endpoint" data-invoice-id="@invoiceId" style="display:none;"></div>
+
+@if (Env.CheatMode)
+{
+    <div id="payjoin-test-workflow" style="display:none;" data-test-endpoint="@Url.Action("RunTestPayment", "UIPayJoin")">
+        <button type="button" class="btn btn-secondary" id="payjoin-run-test" data-label="Run Payjoin test payment" text-translate="true">Run Payjoin test payment</button>
+    </div>
+}
+
+<script>
+(function () {
+    const PAYJOIN_PAYMENT_METHOD_ID = 'BTC-CHAIN';
+    const VUE_PATCH_MAX_ATTEMPTS = 15;
+    const VUE_PATCH_RETRY_DELAY_MS = 200;
+    const TEST_BUTTON_RESET_DELAY_MS = 2000;
+
+    function isPayjoinPaymentMethod(paymentMethodId) {
+        return typeof paymentMethodId === 'string' && paymentMethodId.toUpperCase() === PAYJOIN_PAYMENT_METHOD_ID;
+    }
+
+    function setPayjoinIndicator(visible) {
+        const id = 'payjoin-indicator';
+        let el = document.getElementById(id);
+        if (!el) {
+            el = document.createElement('div');
+            el.id = id;
+            el.className = 'd-flex align-items-center justify-content-center gap-1 text-muted mt-1 mb-2';
+            el.style.fontSize = '0.8125rem';
+            el.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg> PayJoin';
+            const amountDue = document.getElementById('AmountDue');
+            if (amountDue?.parentElement) {
+                amountDue.parentElement.after(el);
+            }
+        }
+        el.style.display = visible ? '' : 'none';
+    }
+
+    async function runPayjoinTestPayment() {
+        const workflow = document.getElementById('payjoin-test-workflow');
+        const btn = document.getElementById('payjoin-run-test');
+        if (!workflow?.dataset.testEndpoint || !btn) {
+            return;
+        }
+
+        const root = document.getElementById('payjoin-toggle');
+        const invoiceId = root?.dataset.invoiceId;
+        if (!invoiceId) {
+            return;
+        }
+
+        const label = btn.getAttribute('data-label') || btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Running...';
+
+        try {
+            const resp = await fetch(workflow.dataset.testEndpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ invoiceId })
+            });
+            if (!resp.ok) {
+                console.warn('Payjoin test payment request failed:', resp.status);
+            }
+            const data = resp.ok ? await resp.json() : null;
+            if (data?.errorMessage) {
+                console.warn('Payjoin test payment error:', data.errorMessage);
+            } else if (data) {
+                btn.textContent = 'Done';
+                setTimeout(() => {
+                    btn.textContent = label;
+                    btn.disabled = false;
+                }, TEST_BUTTON_RESET_DELAY_MS);
+                return;
+            }
+        } catch (err) {
+            console.error('Payjoin test payment failed', err);
+        }
+
+        btn.textContent = label;
+        btn.disabled = false;
+    }
+
+    async function applyPayjoinMode() {
+        const root = document.getElementById('payjoin-toggle');
+        if (!root?.dataset.endpoint) {
+            return;
+        }
+
+        try {
+            const resp = await fetch(root.dataset.endpoint, { credentials: 'same-origin' });
+            if (!resp.ok) {
+                console.warn('Payjoin mode fetch failed:', resp.status);
+                return;
+            }
+            const data = await resp.json();
+            if (!data?.bip21 || !data?.payjoinEnabled) {
+                return;
+            }
+
+            const bip21 = data.bip21;
+
+            function patchVue(attempts) {
+                const app = document.getElementById('Checkout')?.__vue__;
+                if (app?.srvModel) {
+                    const fake = document.getElementById('test-payment');
+                    const wf = document.getElementById('payjoin-test-workflow');
+                    if (fake) {
+                        fake.style.display = 'none';
+                        if (wf?.parentElement) {
+                            fake.parentElement.insertBefore(wf, fake.nextSibling);
+                            wf.style.display = '';
+                        }
+                    }
+
+                    if (!app._payjoinPatched) {
+                        app._payjoinPatched = true;
+                        const orig = app.updateData.bind(app);
+                        app.updateData = d => {
+                            if (d && isPayjoinPaymentMethod(d.paymentMethodId)) {
+                                d.invoiceBitcoinUrl = d.invoiceBitcoinUrlQR = bip21;
+                            }
+                            orig(d);
+                            setPayjoinIndicator(isPayjoinPaymentMethod(
+                                d?.paymentMethodId ?? app.srvModel?.paymentMethodId));
+                        };
+                    }
+
+                    if (isPayjoinPaymentMethod(app.srvModel.paymentMethodId)) {
+                        app.$set(app.srvModel, 'invoiceBitcoinUrl', bip21);
+                        app.$set(app.srvModel, 'invoiceBitcoinUrlQR', bip21);
+                    }
+                    setPayjoinIndicator(isPayjoinPaymentMethod(app.srvModel.paymentMethodId));
+                } else if (attempts > 0) {
+                    setTimeout(() => patchVue(attempts - 1), VUE_PATCH_RETRY_DELAY_MS);
+                }
+            }
+
+            patchVue(VUE_PATCH_MAX_ATTEMPTS);
+        } catch (err) {
+            console.error('Payjoin mode failed', err);
+        }
+    }
+
+    document.addEventListener('click', e => {
+        if (e.target?.id === 'payjoin-run-test') {
+            runPayjoinTestPayment();
+        }
+    });
+
+    applyPayjoinMode();
+})();
+</script>

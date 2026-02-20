@@ -16,11 +16,13 @@ public class Plugin : BaseBTCPayServerPlugin
     {
         applicationBuilder.AddUIExtension("header-nav", "PayjoinHeaderNav");
         applicationBuilder.AddUIExtension("store-nav", "PayjoinStoreNavExtension");
+        applicationBuilder.AddUIExtension("checkout-end", "PayJoinCheckoutExtension");
         applicationBuilder.AddHostedService<ApplicationPartsLogger>();
         applicationBuilder.AddSingleton<PayjoinDemoContext>();
         applicationBuilder.AddHostedService<PayjoinDemoInitializer>();
         applicationBuilder.AddHostedService<PluginMigrationRunner>();
         applicationBuilder.AddSingleton<PayjoinPluginService>();
+        applicationBuilder.AddSingleton<IPayjoinStoreSettingsRepository, PayjoinStoreSettingsRepository>();
         applicationBuilder.AddSingleton<PayjoinPluginDbContextFactory>();
         applicationBuilder.AddDbContext<PayjoinPluginDbContext>((provider, o) =>
         {

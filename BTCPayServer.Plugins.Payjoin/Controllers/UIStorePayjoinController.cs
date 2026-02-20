@@ -16,13 +16,17 @@ namespace BTCPayServer.Plugins.Payjoin.Controllers;
 [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = Policies.CanViewStoreSettings)]
 public class UIStorePayjoinController : Controller
 {
-    private const string PayjoinSettingsKey = "payjoin.settings";
     private readonly StoreRepository _storeRepository;
+    private readonly IPayjoinStoreSettingsRepository _settingsRepository;
     private readonly PayjoinDemoContext _demoContext;
 
-    public UIStorePayjoinController(StoreRepository storeRepository, PayjoinDemoContext demoContext)
+    public UIStorePayjoinController(
+        StoreRepository storeRepository,
+        IPayjoinStoreSettingsRepository settingsRepository,
+        PayjoinDemoContext demoContext)
     {
         _storeRepository = storeRepository;
+        _settingsRepository = settingsRepository;
         _demoContext = demoContext;
     }
 
@@ -35,8 +39,7 @@ public class UIStorePayjoinController : Controller
             return NotFound();
         }
 
-        var settings = await _storeRepository.GetSettingAsync<PayjoinStoreSettings>(storeId, PayjoinSettingsKey).ConfigureAwait(false)
-            ?? new PayjoinStoreSettings();
+        var settings = await _settingsRepository.GetAsync(storeId).ConfigureAwait(false);
         var vm = new PayjoinStoreSettingsViewModel
         {
             StoreId = storeId,
@@ -99,7 +102,7 @@ public class UIStorePayjoinController : Controller
             settings.OhttpRelayUrl = null;
         }
 
-        await _storeRepository.UpdateSetting(storeId, PayjoinSettingsKey, settings).ConfigureAwait(false);
+        await _settingsRepository.SetAsync(storeId, settings).ConfigureAwait(false);
         TempData[WellKnownTempData.SuccessMessage] = "Payjoin settings saved.";
         return RedirectToAction(nameof(Settings), new { storeId });
     }
@@ -114,8 +117,7 @@ public class UIStorePayjoinController : Controller
             return NotFound();
         }
 
-        var settings = await _storeRepository.GetSettingAsync<PayjoinStoreSettings>(storeId, PayjoinSettingsKey).ConfigureAwait(false)
-            ?? new PayjoinStoreSettings();
+        var settings = await _settingsRepository.GetAsync(storeId).ConfigureAwait(false);
         settings.DemoMode = demoMode;
         if (settings.DemoMode)
         {
@@ -136,7 +138,7 @@ public class UIStorePayjoinController : Controller
             settings.OhttpRelayUrl = null;
         }
 
-        await _storeRepository.UpdateSetting(storeId, PayjoinSettingsKey, settings).ConfigureAwait(false);
+        await _settingsRepository.SetAsync(storeId, settings).ConfigureAwait(false);
         return Json(new
         {
             directoryUrl = settings.DirectoryUrl?.ToString(),
