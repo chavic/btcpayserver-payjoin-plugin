@@ -14,7 +14,8 @@ public class Plugin : BaseBTCPayServerPlugin
 
     public override void Execute(IServiceCollection applicationBuilder)
     {
-        applicationBuilder.AddUIExtension("header-nav", "TemplatePluginHeaderNav");
+        applicationBuilder.AddUIExtension("header-nav", "PayjoinHeaderNav");
+        applicationBuilder.AddUIExtension("store-nav", "PayjoinStoreNavExtension");
         applicationBuilder.AddHostedService<ApplicationPartsLogger>();
         applicationBuilder.AddSingleton<PayjoinDemoContext>();
         applicationBuilder.AddHostedService<PayjoinDemoInitializer>();
@@ -26,6 +27,5 @@ public class Plugin : BaseBTCPayServerPlugin
             var factory = provider.GetRequiredService<PayjoinPluginDbContextFactory>();
             factory.ConfigureBuilder(o);
         });
-        applicationBuilder.AddUIExtension("store-nav", "PayJoinStoreNavExtension");
     }
 }
