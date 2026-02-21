@@ -71,14 +71,14 @@
   </ItemGroup>
 
     <ItemGroup>
-      <Compile Include="..\rust-payjoin\payjoin-ffi\csharp\src\payjoin\payjoin.cs" Condition="Exists('..\rust-payjoin\payjoin-ffi\csharp\src\payjoin\payjoin.cs')" />
-      <None Include="..\rust-payjoin\payjoin-ffi\csharp\src\payjoin\libpayjoin_ffi.so" Condition="Exists('..\rust-payjoin\payjoin-ffi\csharp\src\payjoin\libpayjoin_ffi.so')">
+      <Compile Include="..\rust-payjoin\payjoin-ffi\csharp\src\payjoin.cs" Condition="Exists('..\rust-payjoin\payjoin-ffi\csharp\src\payjoin.cs')" />
+      <None Include="..\rust-payjoin\payjoin-ffi\csharp\lib\libpayjoin_ffi.so" Condition="Exists('..\rust-payjoin\payjoin-ffi\csharp\lib\libpayjoin_ffi.so')">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       </None>
-      <None Include="..\rust-payjoin\payjoin-ffi\csharp\src\payjoin\libpayjoin_ffi.dylib" Condition="Exists('..\rust-payjoin\payjoin-ffi\csharp\src\payjoin\libpayjoin_ffi.dylib')">
+      <None Include="..\rust-payjoin\payjoin-ffi\csharp\lib\libpayjoin_ffi.dylib" Condition="Exists('..\rust-payjoin\payjoin-ffi\csharp\lib\libpayjoin_ffi.dylib')">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       </None>
-      <None Include="..\rust-payjoin\payjoin-ffi\csharp\src\payjoin\payjoin_ffi.dll" Condition="Exists('..\rust-payjoin\payjoin-ffi\csharp\src\payjoin\payjoin_ffi.dll')">
+      <None Include="..\rust-payjoin\payjoin-ffi\csharp\lib\payjoin_ffi.dll" Condition="Exists('..\rust-payjoin\payjoin-ffi\csharp\lib\payjoin_ffi.dll')">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       </None>
     </ItemGroup>
