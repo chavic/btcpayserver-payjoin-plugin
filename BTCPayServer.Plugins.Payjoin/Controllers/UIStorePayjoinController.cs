@@ -81,15 +81,10 @@ public class UIStorePayjoinController : Controller
 
         if (settings.DemoMode)
         {
-            settings = await _demoInitializer.InitializeDemoSettingsAsync(storeId, settings, HttpContext.RequestAborted)
-                .ConfigureAwait(false);
+            _demoInitializer.TryApplyDemoSettings(settings);
         }
-        else
-        {
-            settings.DirectoryUrl = null;
-            settings.OhttpRelayUrl = null;
-            await _settingsRepository.SetAsync(storeId, settings).ConfigureAwait(false);
-        }
+
+        await _settingsRepository.SetAsync(storeId, settings).ConfigureAwait(false);
         TempData[WellKnownTempData.SuccessMessage] = "Payjoin settings saved.";
         return RedirectToAction(nameof(Settings), new { storeId });
     }
@@ -108,16 +103,13 @@ public class UIStorePayjoinController : Controller
         settings.DemoMode = demoMode;
         if (settings.DemoMode)
         {
-            settings = await _demoInitializer.InitializeDemoSettingsAsync(storeId, settings, HttpContext.RequestAborted)
-                .ConfigureAwait(false);
+            _demoInitializer.TryApplyDemoSettings(settings);
         }
         else
         {
             settings.DirectoryUrl = null;
             settings.OhttpRelayUrl = null;
         }
-
-        await _settingsRepository.SetAsync(storeId, settings).ConfigureAwait(false);
         return Json(new
         {
             directoryUrl = settings.DirectoryUrl?.ToString(),

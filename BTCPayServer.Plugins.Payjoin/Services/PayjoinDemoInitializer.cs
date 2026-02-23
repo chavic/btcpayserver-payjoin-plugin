@@ -51,6 +51,17 @@ public sealed class PayjoinDemoInitializer : IHostedService
         PayjoinStoreSettings settings,
         CancellationToken cancellationToken)
     {
+        if (!TryApplyDemoSettings(settings))
+        {
+            return settings;
+        }
+
+        await _settingsRepository.SetAsync(storeId, settings).ConfigureAwait(false);
+        return settings;
+    }
+
+    public bool TryApplyDemoSettings(PayjoinStoreSettings settings)
+    {
         if (settings is null)
         {
             throw new ArgumentNullException(nameof(settings));
@@ -58,7 +69,7 @@ public sealed class PayjoinDemoInitializer : IHostedService
 
         if (!settings.DemoMode)
         {
-            return settings;
+            return false;
         }
 
         if (!_context.IsReady)
@@ -69,11 +80,11 @@ public sealed class PayjoinDemoInitializer : IHostedService
             }
             catch (InvalidOperationException)
             {
-                return settings;
+                return false;
             }
             catch (System.Runtime.InteropServices.ExternalException)
             {
-                return settings;
+                return false;
             }
         }
 
@@ -87,8 +98,7 @@ public sealed class PayjoinDemoInitializer : IHostedService
             settings.OhttpRelayUrl = _context.OhttpRelayUrl;
         }
 
-        await _settingsRepository.SetAsync(storeId, settings).ConfigureAwait(false);
-        return settings;
+        return true;
     }
 
     public Task StopAsync(CancellationToken cancellationToken)

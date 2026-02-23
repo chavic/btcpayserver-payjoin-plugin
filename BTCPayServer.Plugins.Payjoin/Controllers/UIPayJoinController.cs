@@ -20,6 +20,7 @@ using NBXplorer;
 using NBXplorer.Models;
 using NBitcoin;
 using uniffi.payjoin;
+using static uniffi.payjoin.SenderPersistedException;
 
 namespace BTCPayServer.Plugins.Payjoin.Controllers;
 
@@ -148,14 +149,15 @@ public class UIPayJoinController : Controller
             return Ok(new { errorMessage = "store not found" });
         }
 
-        if (!_demoContext.IsReady || _demoContext.OhttpRelayUrl is null)
-        {
-            return Ok(new { errorMessage = "Payjoin demo services not ready" });
-        }
-
-        if (!_receiverSessionStore.TryGetSession(request.InvoiceId, out var session))
+        if (!_receiverSessionStore.TryGetSession(request.InvoiceId, out var session) || session is null)
         {
             return Ok(new { errorMessage = "Receiver session not found" });
+        }
+
+        var storeSettings = await _storeSettingsRepository.GetAsync(invoice.StoreId).ConfigureAwait(false);
+        if (storeSettings is null || storeSettings.OhttpRelayUrl is null)
+        {
+            return Ok(new { errorMessage = "OhttpRelayUrl not found" });
         }
 
         var cryptoCode = "BTC";
@@ -249,7 +251,7 @@ public class UIPayJoinController : Controller
             using var initial = senderBuilder.BuildRecommended(1);
             using var withReplyKey = initial.Save(senderPersister);
 
-            using var postContext = withReplyKey.CreateV2PostRequest(_demoContext.OhttpRelayUrl.ToString());
+            using var postContext = withReplyKey.CreateV2PostRequest(storeSettings.OhttpRelayUrl.ToString());
             var postResponse = await SendRequestAsync(postContext.request, cancellationToken).ConfigureAwait(false);
             using var withReplyTransition = withReplyKey.ProcessResponse(postResponse, postContext.ohttpCtx);
 
@@ -258,7 +260,7 @@ public class UIPayJoinController : Controller
             {
                 for (var attempt = 0; attempt < 5; attempt++)
                 {
-                    using var pollRequest = current.CreatePollRequest(_demoContext.OhttpRelayUrl.ToString());
+                    using var pollRequest = current.CreatePollRequest(storeSettings.OhttpRelayUrl.ToString());
                     var pollResponse = await SendRequestAsync(pollRequest.request, cancellationToken).ConfigureAwait(false);
                     using var pollTransition = current.ProcessResponse(pollResponse, pollRequest.ohttpCtx);
                     var outcome = pollTransition.Save(senderPersister);

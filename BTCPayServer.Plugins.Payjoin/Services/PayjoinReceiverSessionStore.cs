@@ -16,16 +16,26 @@ public sealed class PayjoinReceiverSessionStore
     {
     }
 
-    public PayjoinReceiverSessionState CreateSession(string invoiceId, string receiverAddress, string storeId, SystemUri ohttpRelayUrl)
+    public PayjoinReceiverSessionState CreateSession(
+        string invoiceId,
+        string receiverAddress,
+        string storeId,
+        SystemUri ohttpRelayUrl,
+        out bool created)
     {
-        var session = new PayjoinReceiverSessionState(invoiceId, storeId, receiverAddress, ohttpRelayUrl, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
-        _sessions[invoiceId] = session;
+        PayjoinReceiverSessionState? createdSession = null;
+        var session = _sessions.GetOrAdd(invoiceId, _ =>
+        {
+            createdSession = new PayjoinReceiverSessionState(invoiceId, storeId, receiverAddress, ohttpRelayUrl, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+            return createdSession;
+        });
+        created = ReferenceEquals(session, createdSession);
         return session;
     }
 
-    public bool TryGetSession(string invoiceId, out PayjoinReceiverSessionState session)
+    public bool TryGetSession(string invoiceId, out PayjoinReceiverSessionState? session)
     {
-        return _sessions.TryGetValue(invoiceId, out session!);
+        return _sessions.TryGetValue(invoiceId, out session);
     }
 
     public IReadOnlyCollection<PayjoinReceiverSessionState> GetSessions()
@@ -54,11 +64,10 @@ public sealed class PayjoinReceiverSessionStore
 
         public void Save(string @event)
         {
-            _session.Events.Add(@event);
-            _session.Touch();
+            _session.AddEvent(@event);
         }
 
-        public string[] Load() => _session.Events.ToArray();
+        public string[] Load() => _session.GetEvents();
 
         public void Close()
         {
@@ -68,6 +77,8 @@ public sealed class PayjoinReceiverSessionStore
 
 public sealed class PayjoinReceiverSessionState
 {
+    private readonly ConcurrentQueue<string> _events = new();
+
     public PayjoinReceiverSessionState(string invoiceId, string storeId, string receiverAddress, SystemUri ohttpRelayUrl, DateTimeOffset createdAt, DateTimeOffset updatedAt)
     {
         InvoiceId = invoiceId;
@@ -76,7 +87,6 @@ public sealed class PayjoinReceiverSessionState
         OhttpRelayUrl = ohttpRelayUrl;
         CreatedAt = createdAt;
         UpdatedAt = updatedAt;
-        Events = new List<string>();
     }
 
     public string InvoiceId { get; }
@@ -85,7 +95,17 @@ public sealed class PayjoinReceiverSessionState
     public SystemUri OhttpRelayUrl { get; }
     public DateTimeOffset CreatedAt { get; }
     public DateTimeOffset UpdatedAt { get; private set; }
-    internal List<string> Events { get; }
+
+    internal void AddEvent(string @event)
+    {
+        _events.Enqueue(@event);
+        Touch();
+    }
+
+    internal string[] GetEvents()
+    {
+        return _events.ToArray();
+    }
 
     internal void Touch()
     {

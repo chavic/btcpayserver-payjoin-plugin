@@ -73,8 +73,7 @@ public sealed class PayjoinBip21Service
             return bip21;
         }
 
-        OhttpKeys? ohttpKeys;
-
+        ReadOnlyMemory<byte>? сertificate = null;
         if (storeSettings.DemoMode)
         {
             if (!_demoContext.IsReady)
@@ -82,12 +81,10 @@ public sealed class PayjoinBip21Service
                 return bip21;
             }
 
-            ohttpKeys = _demoContext.OhttpKeys;
+            сertificate = _demoContext.Certificate;
         }
-        else
-        {
-            ohttpKeys = await _ohttpKeysProvider.GetKeysAsync(ohttpRelayUrl, directoryUrl, storeId, cancellationToken).ConfigureAwait(false);
-        }
+
+        OhttpKeys? ohttpKeys = await _ohttpKeysProvider.GetKeysAsync(ohttpRelayUrl, directoryUrl, storeId, сertificate, cancellationToken).ConfigureAwait(false);
 
         if (ohttpKeys is null)
         {
@@ -96,14 +93,17 @@ public sealed class PayjoinBip21Service
 
         try
         {
-            var session = _receiverSessionStore.CreateSession(invoiceId, destination, storeId, ohttpRelayUrl);
-            var persister = PayjoinReceiverSessionStore.CreatePersister(session);
+            var session = _receiverSessionStore.CreateSession(invoiceId, destination, storeId, ohttpRelayUrl, out var created);
+            if (created)
+            {
+                var persister = PayjoinReceiverSessionStore.CreatePersister(session);
 
-            var amountSats = checked((ulong)Money.Coins(due).Satoshi);
-            using var receiverBuilder = new ReceiverBuilder(destination, directoryUrl, ohttpKeys);
-            using var builderWithAmount = receiverBuilder.WithAmount(amountSats);
-            using var transition = builderWithAmount.Build();
-            using var savedSession = transition.Save(persister);
+                var amountSats = checked((ulong)Money.Coins(due).Satoshi);
+                using var receiverBuilder = new ReceiverBuilder(destination, directoryUrl, ohttpKeys);
+                using var builderWithAmount = receiverBuilder.WithAmount(amountSats);
+                using var transition = builderWithAmount.Build();
+                using var savedSession = transition.Save(persister);
+            }
         }
         catch (UniffiException e)
         {
