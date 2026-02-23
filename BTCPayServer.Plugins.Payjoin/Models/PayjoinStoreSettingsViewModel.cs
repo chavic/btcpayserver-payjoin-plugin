@@ -2,6 +2,7 @@ using BTCPayServer.Abstractions.Models;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.Mvc.ModelBinding.Validation;
 using System;
+using System.ComponentModel.DataAnnotations;
 
 namespace BTCPayServer.Plugins.Payjoin.Models;
 
@@ -11,8 +12,10 @@ public class PayjoinStoreSettingsViewModel
 
     public bool EnabledByDefault { get; set; }
 
+    [Required]
     public Uri? DirectoryUrl { get; set; }
 
+    [Required]
     public Uri? OhttpRelayUrl { get; set; }
 
     public bool DemoMode { get; set; }

@@ -65,7 +65,7 @@ public sealed class PayjoinOhttpKeysProvider
             _memoryCache.Set(cacheKey, ohttpKeys, cacheOptions);
             return ohttpKeys;
         }
-        catch (UniffiException e)
+        catch (Exception e) when (e is UniffiException or HttpRequestException)
         {
             LogFetchFailure(_logger, ohttpRelayUrl.AbsoluteUri, storeId, e);
             return null;
@@ -82,8 +82,8 @@ public sealed class PayjoinOhttpKeysProvider
 
         using var handler = new HttpClientHandler
         {
-            Proxy = ohttpRelay is null ? null : new System.Net.WebProxy(ohttpRelay),
-            UseProxy = ohttpRelay is not null,
+            Proxy = new System.Net.WebProxy(ohttpRelay),
+            UseProxy = true,
             CheckCertificateRevocationList = true
         };
 
