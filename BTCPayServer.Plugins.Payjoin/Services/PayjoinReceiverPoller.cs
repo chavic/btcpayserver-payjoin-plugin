@@ -29,20 +29,17 @@ public sealed class PayjoinReceiverPoller : BackgroundService
     private static readonly Action<ILogger, string, string, Exception?> LogPayjoinReceiverReplayFailed =
         LoggerMessage.Define<string, string>(LogLevel.Warning, new EventId(5, nameof(LogPayjoinReceiverReplayFailed)),
             "Payjoin receiver replay failed for {InvoiceId}: {Message}");
-    private readonly PayjoinDemoContext _demoContext;
     private readonly PayjoinReceiverSessionStore _sessionStore;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<PayjoinReceiverPoller> _logger;
     private readonly BTCPayNetworkProvider _networkProvider;
 
     public PayjoinReceiverPoller(
-        PayjoinDemoContext demoContext,
         PayjoinReceiverSessionStore sessionStore,
         IHttpClientFactory httpClientFactory,
         BTCPayNetworkProvider networkProvider,
         ILogger<PayjoinReceiverPoller> logger)
     {
-        _demoContext = demoContext;
         _sessionStore = sessionStore;
         _httpClientFactory = httpClientFactory;
         _networkProvider = networkProvider;
@@ -54,11 +51,6 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
-            if (!_demoContext.IsReady || _demoContext.OhttpRelayUrl is null)
-            {
-                continue;
-            }
-
             foreach (var session in _sessionStore.GetSessions())
             {
                 try
