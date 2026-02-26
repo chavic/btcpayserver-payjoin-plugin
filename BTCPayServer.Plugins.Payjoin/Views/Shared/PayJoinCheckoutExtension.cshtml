@@ -64,6 +64,7 @@
     const VUE_PATCH_MAX_ATTEMPTS = 15;
     const VUE_PATCH_RETRY_DELAY_MS = 200;
     const TEST_BUTTON_RESET_DELAY_MS = 2000;
+    let currentPaymentUrl = null;
 
     function isPayjoinPaymentMethod(paymentMethodId) {
         return typeof paymentMethodId === 'string' && paymentMethodId.toUpperCase() === PAYJOIN_PAYMENT_METHOD_ID;
@@ -99,6 +100,13 @@
             return;
         }
 
+        const app = document.getElementById('Checkout')?.__vue__;
+        const paymentUrl = root?.dataset.paymentUrl || currentPaymentUrl || app?.srvModel?.invoiceBitcoinUrl;
+        if (!paymentUrl) {
+            console.warn('Payjoin test payment URL is not available');
+            return;
+        }
+
         const label = btn.getAttribute('data-label') || btn.textContent;
         btn.disabled = true;
         btn.textContent = 'Running...';
@@ -108,7 +116,7 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'same-origin',
-                body: JSON.stringify({ invoiceId })
+                body: JSON.stringify({ invoiceId, paymentUrl })
             });
             if (!resp.ok) {
                 console.warn('Payjoin test payment request failed:', resp.status);
@@ -150,6 +158,8 @@
             }
 
             const bip21 = data.bip21;
+            currentPaymentUrl = bip21;
+            root.dataset.paymentUrl = bip21;
 
             function patchVue(attempts) {
                 const app = document.getElementById('Checkout')?.__vue__;

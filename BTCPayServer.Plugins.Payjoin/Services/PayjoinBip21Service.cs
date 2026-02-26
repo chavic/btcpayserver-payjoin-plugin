@@ -1,4 +1,3 @@
-using BTCPayServer.Common;
 using BTCPayServer.Plugins.Payjoin.Models;
 using Microsoft.Extensions.Logging;
 using NBitcoin;
@@ -37,7 +36,7 @@ public sealed class PayjoinBip21Service
         _logger = logger;
     }
 
-    public async Task<PaymentUrlBuilder> BuildAsync(
+    public async Task<string> BuildAsync(
         string cryptoCode,
         string destination,
         decimal due,
@@ -53,7 +52,7 @@ public sealed class PayjoinBip21Service
             throw new InvalidOperationException($"Network not available for {cryptoCode}");
         }
 
-        var bip21 = network.GenerateBIP21(destination, due);
+        var bip21 = network.GenerateBIP21(destination, due).ToString();
 
         if (!enablePayjoin || storeSettings is null)
         {
@@ -94,16 +93,33 @@ public sealed class PayjoinBip21Service
         try
         {
             var session = _receiverSessionStore.CreateSession(invoiceId, destination, storeId, ohttpRelayUrl, out var created);
+            var persister = PayjoinReceiverSessionStore.CreatePersister(session);
+
             if (created)
             {
-                var persister = PayjoinReceiverSessionStore.CreatePersister(session);
-
                 var amountSats = checked((ulong)Money.Coins(due).Satoshi);
                 using var receiverBuilder = new ReceiverBuilder(destination, directoryUrl, ohttpKeys);
                 using var builderWithAmount = receiverBuilder.WithAmount(amountSats);
                 using var transition = builderWithAmount.Build();
                 using var savedSession = transition.Save(persister);
             }
+
+            using var replay = PayjoinMethods.ReplayReceiverEventLog(persister);
+            using var history = replay.SessionHistory();
+            using var pjUri = history.PjUri();
+            var payjoinUri = pjUri.AsString();
+            if (string.IsNullOrWhiteSpace(payjoinUri))
+            {
+                return bip21;
+            }
+
+            return payjoinUri;
+        }
+        catch (ReceiverReplayException e)
+        {
+            _receiverSessionStore.RemoveSession(invoiceId);
+            LogReceiverBuilderFailure(_logger, invoiceId, e);
+            return bip21;
         }
         catch (UniffiException e)
         {
@@ -111,9 +127,6 @@ public sealed class PayjoinBip21Service
             LogReceiverBuilderFailure(_logger, invoiceId, e);
             return bip21;
         }
-
-        bip21.QueryParams.Add("pj", directoryUrl);
-        return bip21;
     }
 }
 
