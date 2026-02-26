@@ -19,8 +19,8 @@ using Microsoft.AspNetCore.Mvc;
 using NBXplorer;
 using NBXplorer.Models;
 using NBitcoin;
-using static uniffi.payjoin.SenderPersistedException;
 using Payjoin;
+using static Payjoin.SenderPersistedException;
 using PayjoinUri = Payjoin.Uri;
 
 namespace BTCPayServer.Plugins.Payjoin.Controllers;
