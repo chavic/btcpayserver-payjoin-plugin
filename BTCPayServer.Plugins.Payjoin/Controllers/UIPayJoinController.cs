@@ -114,8 +114,26 @@ public class UIPayJoinController : Controller
             invoice.StoreId,
             cancellationToken).ConfigureAwait(false);
 
-        var actualPayjoinEnabled = bip21.QueryParams.ContainsKey("pj");
-        return Ok(new { bip21 = bip21.ToString(), payjoinEnabled = actualPayjoinEnabled });
+        var actualPayjoinEnabled = IsPayjoinEnabled(bip21);
+        return Ok(new { bip21, payjoinEnabled = actualPayjoinEnabled });
+    }
+
+    private static bool IsPayjoinEnabled(string paymentUrl)
+    {
+        try
+        {
+            using var parsedUri = PayjoinUri.Parse(paymentUrl);
+            using var _ = parsedUri.CheckPjSupported();
+            return true;
+        }
+        catch (PjParseException)
+        {
+            return false;
+        }
+        catch (PjNotSupported)
+        {
+            return false;
+        }
     }
 
     [AllowAnonymous]
