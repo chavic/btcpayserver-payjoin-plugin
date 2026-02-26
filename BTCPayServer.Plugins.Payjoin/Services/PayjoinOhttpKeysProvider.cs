@@ -5,7 +5,7 @@ using System.Collections.Concurrent;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using uniffi.payjoin;
+using Payjoin;
 using SystemUri = System.Uri;
 
 namespace BTCPayServer.Plugins.Payjoin.Services;

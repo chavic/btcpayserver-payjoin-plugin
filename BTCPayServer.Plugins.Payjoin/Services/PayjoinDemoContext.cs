@@ -1,6 +1,6 @@
 using System;
 using Microsoft.Extensions.Logging;
-using uniffi.payjoin;
+using Payjoin;
 
 namespace BTCPayServer.Plugins.Payjoin.Services;
 

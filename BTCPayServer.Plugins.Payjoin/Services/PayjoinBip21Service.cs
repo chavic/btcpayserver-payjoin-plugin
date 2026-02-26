@@ -4,7 +4,7 @@ using NBitcoin;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using uniffi.payjoin;
+using Payjoin;
 
 namespace BTCPayServer.Plugins.Payjoin.Services;
 

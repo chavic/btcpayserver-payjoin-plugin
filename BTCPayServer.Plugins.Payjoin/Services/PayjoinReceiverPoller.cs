@@ -1,13 +1,13 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using NBitcoin;
+using Payjoin;
 using System;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading;
 using System.Threading.Tasks;
-using uniffi.payjoin;
 using SystemUri = System.Uri;
 
 namespace BTCPayServer.Plugins.Payjoin.Services;

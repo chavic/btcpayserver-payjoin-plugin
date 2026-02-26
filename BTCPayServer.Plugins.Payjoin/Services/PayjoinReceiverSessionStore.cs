@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using SystemUri = System.Uri;
 using BTCPayServer.Data;
-using uniffi.payjoin;
+using Payjoin;
 
 namespace BTCPayServer.Plugins.Payjoin.Services;
 
