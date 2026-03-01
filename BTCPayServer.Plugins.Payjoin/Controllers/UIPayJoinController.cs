@@ -1,9 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net.Http;
-using System.Threading;
-using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Constants;
 using BTCPayServer.Client;
 using BTCPayServer.Data;
@@ -16,10 +10,16 @@ using BTCPayServer.Services.Stores;
 using BTCPayServer.Services.Wallets;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using NBitcoin;
 using NBXplorer;
 using NBXplorer.Models;
-using NBitcoin;
 using Payjoin;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
 using static Payjoin.SenderPersistedException;
 using PayjoinUri = Payjoin.Uri;
 
@@ -156,6 +156,11 @@ public class UIPayJoinController : Controller
             return Ok(new { errorMessage = "invoiceId is required" });
         }
 
+        if (request.PaymentUrl is null)
+        {
+            return Ok(new { errorMessage = "paymentUrl is required" });
+        }
+
         var invoice = await _invoiceRepository.GetInvoice(request.InvoiceId).ConfigureAwait(false);
         if (invoice is null)
         {
@@ -166,11 +171,6 @@ public class UIPayJoinController : Controller
         if (store is null)
         {
             return Ok(new { errorMessage = "store not found" });
-        }
-
-        if (!_receiverSessionStore.TryGetSession(request.InvoiceId, out var session) || session is null)
-        {
-            return Ok(new { errorMessage = "Receiver session not found" });
         }
 
         var storeSettings = await _storeSettingsRepository.GetAsync(invoice.StoreId).ConfigureAwait(false);
@@ -185,12 +185,6 @@ public class UIPayJoinController : Controller
         if (derivationScheme is null)
         {
             return Ok(new { errorMessage = "wallet not configured" });
-        }
-
-        var prompt = invoice.GetPaymentPrompt(paymentMethodId);
-        if (prompt?.Destination is null)
-        {
-            return Ok(new { errorMessage = "payment prompt not available" });
         }
 
         var network = _networkProvider.GetNetwork<BTCPayNetwork>(cryptoCode);
@@ -209,7 +203,32 @@ public class UIPayJoinController : Controller
         var allCoins = await wallet.GetUnspentCoins(derivationScheme.AccountDerivation, false, cancellationToken).ConfigureAwait(false);
         var confirmedTotal = confirmedCoins.Sum(coin => coin.Value.GetValue(network));
         var allTotal = allCoins.Sum(coin => coin.Value.GetValue(network));
-        var calculation = prompt.Calculate();
+
+        PjUri pjUri;
+        string paymentAddress;
+        decimal paymentAmount;
+        try
+        {
+            using var parsedUri = PayjoinUri.Parse(request.PaymentUrl.ToString());
+            paymentAddress = parsedUri.Address();
+            var amountSats = parsedUri.AmountSats();
+            if (amountSats is null)
+            {
+                return Ok(new { errorMessage = "payment amount missing in paymentUrl" });
+            }
+
+            paymentAmount = Money.Satoshis(checked((long)amountSats.Value)).ToDecimal(MoneyUnit.BTC);
+            pjUri = parsedUri.CheckPjSupported();
+        }
+        catch (PjParseException ex)
+        {
+            return Ok(new { errorMessage = $"Invalid BIP21 URI: {ex.Message}" });
+        }
+        catch (PjNotSupported ex)
+        {
+            return Ok(new { errorMessage = $"Payjoin not available in URI: {ex.Message}" });
+        }
+
         var psbtRequest = new CreatePSBTRequest
         {
             RBF = network.SupportRBF ? true : null,
@@ -219,7 +238,7 @@ public class UIPayJoinController : Controller
             }
         };
 
-        var available = confirmedTotal < calculation.Due && allTotal >= calculation.Due ? allTotal : confirmedTotal;
+        var available = confirmedTotal < paymentAmount && allTotal >= paymentAmount ? allTotal : confirmedTotal;
         var feeBuffer = Money.Satoshis(1000).ToDecimal(MoneyUnit.BTC);
         var spendable = Math.Max(available - feeBuffer, 0.0m);
         if (spendable <= 0.0m)
@@ -227,14 +246,14 @@ public class UIPayJoinController : Controller
             return Ok(new { errorMessage = "wallet funds too low for fees" });
         }
 
-        var amountToSend = Math.Min(calculation.Due, spendable);
+        var amountToSend = Math.Min(paymentAmount, spendable);
         psbtRequest.Destinations.Add(new CreatePSBTDestination
         {
-            Destination = BitcoinAddress.Create(prompt.Destination, network.NBitcoinNetwork),
+            Destination = BitcoinAddress.Create(paymentAddress, network.NBitcoinNetwork),
             Amount = Money.Coins(amountToSend)
         });
 
-        if (confirmedTotal < calculation.Due && allTotal >= calculation.Due && allCoins.Length > 0)
+        if (confirmedTotal < paymentAmount && allTotal >= paymentAmount && allCoins.Length > 0)
         {
             psbtRequest.IncludeOnlyOutpoints = allCoins.Select(coin => coin.OutPoint).ToList();
         }
@@ -258,79 +277,94 @@ public class UIPayJoinController : Controller
         var senderPsbtBase64 = createResult.PSBT.ToBase64();
         string? proposalPsbtBase64 = null;
 
-        var persister = PayjoinReceiverSessionStore.CreatePersister(session);
-        using var replay = PayjoinMethods.ReplayReceiverEventLog(persister);
-        using var history = replay.SessionHistory();
-        using var pjUri = history.PjUri();
-
-        try
+        using (pjUri)
         {
-            var senderPersister = new InMemorySenderPersister();
-            using var senderBuilder = new SenderBuilder(senderPsbtBase64, pjUri);
-            using var initial = senderBuilder.BuildRecommended(1);
-            using var withReplyKey = initial.Save(senderPersister);
-
-            using var postContext = withReplyKey.CreateV2PostRequest(storeSettings.OhttpRelayUrl.ToString());
-            var postResponse = await SendRequestAsync(postContext.request, cancellationToken).ConfigureAwait(false);
-            using var withReplyTransition = withReplyKey.ProcessResponse(postResponse, postContext.ohttpCtx);
-
-            var current = withReplyTransition.Save(senderPersister);
             try
             {
-                for (var attempt = 0; attempt < 5; attempt++)
+                var senderPersister = new InMemorySenderPersister();
+                using var senderBuilder = new SenderBuilder(senderPsbtBase64, pjUri);
+                using var initial = senderBuilder.BuildRecommended(250);
+                using var withReplyKey = initial.Save(senderPersister);
+
+                using var postContext = withReplyKey.CreateV2PostRequest(storeSettings.OhttpRelayUrl.ToString());
+                var postResponse = await SendRequestAsync(postContext.request, cancellationToken).ConfigureAwait(false);
+                using var withReplyTransition = withReplyKey.ProcessResponse(postResponse, postContext.ohttpCtx);
+
+                var current = withReplyTransition.Save(senderPersister);
+                try
                 {
-                    using var pollRequest = current.CreatePollRequest(storeSettings.OhttpRelayUrl.ToString());
-                    var pollResponse = await SendRequestAsync(pollRequest.request, cancellationToken).ConfigureAwait(false);
-                    using var pollTransition = current.ProcessResponse(pollResponse, pollRequest.ohttpCtx);
-                    var outcome = pollTransition.Save(senderPersister);
-                    try
+                    for (var attempt = 0; attempt < 5; attempt++)
                     {
-                        switch (outcome)
+                        using var pollRequest = current.CreatePollRequest(storeSettings.OhttpRelayUrl.ToString());
+                        var pollResponse = await SendRequestAsync(pollRequest.request, cancellationToken).ConfigureAwait(false);
+                        using var pollTransition = current.ProcessResponse(pollResponse, pollRequest.ohttpCtx);
+                        PollingForProposalTransitionOutcome? outcome;
+                        try
                         {
-                            case PollingForProposalTransitionOutcome.Progress progress:
-                                proposalPsbtBase64 = progress.psbtBase64;
-                                attempt = 5;
-                                break;
-                            case PollingForProposalTransitionOutcome.Stasis stasis:
-                                current.Dispose();
-                                current = stasis.inner;
-                                outcome = null;
-                                break;
+                            outcome = pollTransition.Save(senderPersister);
                         }
-                    }
-                    finally
-                    {
-                        outcome?.Dispose();
-                    }
+                        catch (SenderPersistedException.ResponseException)
+                        {
+                            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken).ConfigureAwait(false);
+                            continue;
+                        }
 
-                    if (proposalPsbtBase64 is not null)
-                    {
-                        break;
-                    }
+                        try
+                        {
+                            switch (outcome)
+                            {
+                                case PollingForProposalTransitionOutcome.Progress progress:
+                                    proposalPsbtBase64 = progress.psbtBase64;
+                                    break;
+                                case PollingForProposalTransitionOutcome.Stasis stasis:
+                                    current.Dispose();
+                                    current = stasis.inner;
+                                    outcome = null;
+                                    break;
+                            }
+                        }
+                        finally
+                        {
+                            outcome?.Dispose();
+                        }
 
-                    await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken).ConfigureAwait(false);
+                        if (proposalPsbtBase64 is not null)
+                        {
+                            break;
+                        }
+
+                        await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken).ConfigureAwait(false);
+                    }
+                }
+                finally
+                {
+                    current.Dispose();
                 }
             }
-            finally
+            catch (BuildSenderException ex)
             {
-                current.Dispose();
+                return Ok(new { errorMessage = $"Sender build failed: {ex.Message}" });
             }
-        }
-        catch (BuildSenderException ex)
-        {
-            return Ok(new { errorMessage = $"Sender build failed: {ex.Message}" });
-        }
-        catch (InvalidOperationException ex)
-        {
-            return Ok(new { errorMessage = $"Sender demo failed: {ex.Message}" });
-        }
-        catch (HttpRequestException ex)
-        {
-            return Ok(new { errorMessage = $"Sender demo failed: {ex.Message}" });
-        }
-        catch (TaskCanceledException ex)
-        {
-            return Ok(new { errorMessage = $"Sender demo failed: {ex.Message}" });
+            catch (InvalidOperationException ex)
+            {
+                return Ok(new { errorMessage = $"Sender failed: {ex.Message}" });
+            }
+            catch (HttpRequestException ex)
+            {
+                return Ok(new { errorMessage = $"Sender failed: {ex.Message}" });
+            }
+            catch (TaskCanceledException ex)
+            {
+                return Ok(new { errorMessage = $"Sender failed: {ex.Message}" });
+            }
+            catch (SenderPersistedException.ResponseException ex)
+            {
+                return Ok(new { errorMessage = $"Sender response invalid: {ex.Message}" });
+            }
+            catch (SenderPersistedException ex)
+            {
+                return Ok(new { errorMessage = $"Sender state failed: {ex.Message}" });
+            }
         }
 
         if (string.IsNullOrWhiteSpace(proposalPsbtBase64))
@@ -402,6 +436,8 @@ public class UIPayJoinController : Controller
 
         var client = _httpClientFactory.CreateClient(nameof(UIPayJoinController));
         using var response = await client.SendAsync(message, cancellationToken).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+
         return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
     }
 
