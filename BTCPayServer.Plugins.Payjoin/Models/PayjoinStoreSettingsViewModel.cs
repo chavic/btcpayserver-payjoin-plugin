@@ -13,12 +13,10 @@ public class PayjoinStoreSettingsViewModel
     public bool EnabledByDefault { get; set; }
 
     [Required]
-    public Uri? DirectoryUrl { get; set; }
+    public Uri? DirectoryUrl { get; set; } = PayjoinStoreSettings.DefaultDirectoryUrl;
 
     [Required]
-    public Uri? OhttpRelayUrl { get; set; }
-
-    public bool DemoMode { get; set; }
+    public Uri? OhttpRelayUrl { get; set; } = PayjoinStoreSettings.DefaultOhttpRelayUrl;
 
     [BindNever]
     [ValidateNever]

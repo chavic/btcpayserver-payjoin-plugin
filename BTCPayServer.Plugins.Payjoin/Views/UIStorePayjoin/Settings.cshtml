@@ -34,49 +34,6 @@
                 <input asp-for="OhttpRelayUrl" class="form-control" id="PayjoinOhttpRelayUrl" />
                 <span asp-validation-for="OhttpRelayUrl" class="text-danger"></span>
             </div>
-
-            <div class="form-group">
-                <div class="form-check">
-                    <input asp-for="DemoMode" type="checkbox" class="form-check-input" id="PayjoinDemoMode" />
-                    <label asp-for="DemoMode" class="form-check-label" text-translate="true">Demo mode</label>
-                </div>
-            </div>
         </div>
     </div>
 </form>
-
-<script>
-    document.addEventListener("DOMContentLoaded", () => {
-        const demoMode = document.getElementById("PayjoinDemoMode");
-        const directoryUrl = document.getElementById("PayjoinDirectoryUrl");
-        const ohttpRelayUrl = document.getElementById("PayjoinOhttpRelayUrl");
-        const token = document.querySelector('input[name="__RequestVerificationToken"]');
-        if (!demoMode || !directoryUrl || !ohttpRelayUrl) {
-            return;
-        }
-
-        demoMode.addEventListener("change", async () => {
-            const formData = new FormData();
-            formData.append("demoMode", demoMode.checked ? "true" : "false");
-            if (token && token.value) {
-                formData.append("__RequestVerificationToken", token.value);
-            }
-
-            const response = await fetch("@Url.Action("ToggleDemoMode", "UIStorePayjoin", new { storeId = Model.StoreId })", {
-                method: "POST",
-                body: formData,
-                headers: {
-                    "X-Requested-With": "XMLHttpRequest"
-                }
-            });
-
-            if (!response.ok) {
-                return;
-            }
-
-            const data = await response.json();
-            directoryUrl.value = data.directoryUrl ?? "";
-            ohttpRelayUrl.value = data.ohttpRelayUrl ?? "";
-        });
-    });
-</script>

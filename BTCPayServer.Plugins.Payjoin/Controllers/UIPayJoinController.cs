@@ -39,7 +39,6 @@ public class UIPayJoinController : Controller
     private readonly StoreRepository _storeRepository;
     private readonly PaymentMethodHandlerDictionary _handlers;
     private readonly BTCPayNetworkProvider _networkProvider;
-    private readonly PayjoinDemoContext _demoContext;
     private readonly PayjoinReceiverSessionStore _receiverSessionStore;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IPayjoinStoreSettingsRepository _storeSettingsRepository;
@@ -54,7 +53,6 @@ public class UIPayJoinController : Controller
         StoreRepository storeRepository,
         PaymentMethodHandlerDictionary handlers,
         BTCPayNetworkProvider networkProvider,
-        PayjoinDemoContext demoContext,
         PayjoinReceiverSessionStore receiverSessionStore,
         IHttpClientFactory httpClientFactory,
         IPayjoinStoreSettingsRepository storeSettingsRepository,
@@ -68,7 +66,6 @@ public class UIPayJoinController : Controller
         _storeRepository = storeRepository;
         _handlers = handlers;
         _networkProvider = networkProvider;
-        _demoContext = demoContext;
         _receiverSessionStore = receiverSessionStore;
         _httpClientFactory = httpClientFactory;
         _storeSettingsRepository = storeSettingsRepository;

@@ -20,7 +20,7 @@ public class UIPayJoinControllerTests
     [Fact]
     public async Task GetBip21ReturnsBadRequestWhenInvoiceIdMissing()
     {
-        using var controller = new UIPayJoinController(null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, NullLogger<UIPayJoinController>.Instance);
+        using var controller = new UIPayJoinController(null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
 
         var result = await controller.GetBip21(" ", "standard", TestContext.Current.CancellationToken);
 
@@ -30,7 +30,7 @@ public class UIPayJoinControllerTests
     [Fact]
     public async Task RunTestPaymentReturnsNotFoundWhenCheatModeDisabled()
     {
-        using var controller = new UIPayJoinController(CreateEnvironment(false), null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, NullLogger<UIPayJoinController>.Instance);
+        using var controller = new UIPayJoinController(CreateEnvironment(false), null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
 
         var result = await controller.RunTestPayment(new RunTestPaymentRequest
         {

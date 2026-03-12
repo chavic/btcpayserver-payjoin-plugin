@@ -24,21 +24,18 @@ public sealed class PayjoinOhttpKeysProvider
 
     private readonly IMemoryCache _memoryCache;
     private readonly ILogger<PayjoinOhttpKeysProvider> _logger;
-    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _fetchLocks = new();
 
-    public PayjoinOhttpKeysProvider(IMemoryCache memoryCache, ILogger<PayjoinOhttpKeysProvider> logger, IHttpClientFactory httpClientFactory)
+    public PayjoinOhttpKeysProvider(IMemoryCache memoryCache, ILogger<PayjoinOhttpKeysProvider> logger)
     {
         _memoryCache = memoryCache;
         _logger = logger;
-        _httpClientFactory = httpClientFactory;
     }
 
     internal async Task<OhttpKeys?> GetKeysAsync(
         SystemUri ohttpRelayUrl,
         string directoryUrl,
         string storeId,
-        ReadOnlyMemory<byte>? certificate,
         CancellationToken cancellationToken)
     {
         var cacheKey = $"PayjoinOhttpKeys_{storeId}_{ohttpRelayUrl}";
@@ -58,7 +55,7 @@ public sealed class PayjoinOhttpKeysProvider
             }
 
             //var ohttpKeysClient = new OhttpKeysClient(_httpClientFactory.CreateClient(nameof(PayjoinOhttpKeysProvider)));
-            using var ohttpKeysClient = new OhttpKeysClient(ohttpRelayUrl, certificate?.ToArray());
+            using var ohttpKeysClient = new OhttpKeysClient(ohttpRelayUrl);
             // TODO: Consider adding some retry logic and refreshing the keys on failure.
             ohttpKeys = await ohttpKeysClient.GetOhttpKeysAsync(new SystemUri(directoryUrl), cancellationToken).ConfigureAwait(false);
 

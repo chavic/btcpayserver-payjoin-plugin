@@ -6,7 +6,6 @@ using BTCPayServer.Plugins.Payjoin.Models;
 using BTCPayServer.Plugins.Payjoin.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System;
 using System.Threading.Tasks;
 
 namespace BTCPayServer.Plugins.Payjoin.Controllers;
@@ -16,14 +15,10 @@ namespace BTCPayServer.Plugins.Payjoin.Controllers;
 public class UIStorePayjoinController : Controller
 {
     private readonly IPayjoinStoreSettingsRepository _settingsRepository;
-    private readonly PayjoinDemoInitializer _demoInitializer;
 
-    public UIStorePayjoinController(
-        IPayjoinStoreSettingsRepository settingsRepository,
-        PayjoinDemoInitializer demoInitializer)
+    public UIStorePayjoinController(IPayjoinStoreSettingsRepository settingsRepository)
     {
         _settingsRepository = settingsRepository;
-        _demoInitializer = demoInitializer;
     }
 
     [HttpGet("")]
@@ -42,7 +37,6 @@ public class UIStorePayjoinController : Controller
             EnabledByDefault = settings.EnabledByDefault,
             DirectoryUrl = settings.DirectoryUrl,
             OhttpRelayUrl = settings.OhttpRelayUrl,
-            DemoMode = settings.DemoMode,
             LayoutModel = new LayoutModel("Payjoin", "Payjoin").SetCategory(WellKnownCategories.Store)
         };
         ViewData.SetLayoutModel(vm.LayoutModel);
@@ -75,45 +69,11 @@ public class UIStorePayjoinController : Controller
         {
             EnabledByDefault = model.EnabledByDefault,
             DirectoryUrl = model.DirectoryUrl,
-            OhttpRelayUrl = model.OhttpRelayUrl,
-            DemoMode = model.DemoMode
+            OhttpRelayUrl = model.OhttpRelayUrl
         };
-
-        if (settings.DemoMode)
-        {
-            _demoInitializer.TryApplyDemoSettings(settings);
-        }
 
         await _settingsRepository.SetAsync(storeId, settings).ConfigureAwait(false);
         TempData[WellKnownTempData.SuccessMessage] = "Payjoin settings saved.";
         return RedirectToAction(nameof(Settings), new { storeId });
-    }
-
-    [HttpPost("demo-mode")]
-    [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = Policies.CanModifyStoreSettings)]
-    public async Task<IActionResult> ToggleDemoMode(string storeId, [FromForm] bool demoMode)
-    {
-        var store = HttpContext.GetStoreData();
-        if (store is null)
-        {
-            return NotFound();
-        }
-
-        var settings = await _settingsRepository.GetAsync(storeId).ConfigureAwait(false);
-        settings.DemoMode = demoMode;
-        if (settings.DemoMode)
-        {
-            _demoInitializer.TryApplyDemoSettings(settings);
-        }
-        else
-        {
-            settings.DirectoryUrl = null;
-            settings.OhttpRelayUrl = null;
-        }
-        return Json(new
-        {
-            directoryUrl = settings.DirectoryUrl?.ToString(),
-            ohttpRelayUrl = settings.OhttpRelayUrl?.ToString()
-        });
     }
 }

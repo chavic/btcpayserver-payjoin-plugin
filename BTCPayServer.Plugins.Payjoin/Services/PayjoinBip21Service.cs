@@ -18,20 +18,17 @@ public sealed class PayjoinBip21Service
 
     private readonly BTCPayNetworkProvider _networkProvider;
     private readonly PayjoinReceiverSessionStore _receiverSessionStore;
-    private readonly PayjoinDemoContext _demoContext;
     private readonly PayjoinOhttpKeysProvider _ohttpKeysProvider;
     private readonly ILogger<PayjoinBip21Service> _logger;
 
     public PayjoinBip21Service(
         BTCPayNetworkProvider networkProvider,
         PayjoinReceiverSessionStore receiverSessionStore,
-        PayjoinDemoContext demoContext,
         PayjoinOhttpKeysProvider ohttpKeysProvider,
         ILogger<PayjoinBip21Service> logger)
     {
         _networkProvider = networkProvider;
         _receiverSessionStore = receiverSessionStore;
-        _demoContext = demoContext;
         _ohttpKeysProvider = ohttpKeysProvider;
         _logger = logger;
     }
@@ -72,18 +69,7 @@ public sealed class PayjoinBip21Service
             return bip21;
         }
 
-        ReadOnlyMemory<byte>? сertificate = null;
-        if (storeSettings.DemoMode)
-        {
-            if (!_demoContext.IsReady)
-            {
-                return bip21;
-            }
-
-            сertificate = _demoContext.Certificate;
-        }
-
-        OhttpKeys? ohttpKeys = await _ohttpKeysProvider.GetKeysAsync(ohttpRelayUrl, directoryUrl, storeId, сertificate, cancellationToken).ConfigureAwait(false);
+        OhttpKeys? ohttpKeys = await _ohttpKeysProvider.GetKeysAsync(ohttpRelayUrl, directoryUrl, storeId, cancellationToken).ConfigureAwait(false);
 
         if (ohttpKeys is null)
         {

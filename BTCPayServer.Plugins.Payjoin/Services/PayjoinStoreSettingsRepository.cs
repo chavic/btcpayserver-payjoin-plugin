@@ -2,6 +2,7 @@ using BTCPayServer.Data;
 using BTCPayServer.Plugins.Payjoin.Models;
 using BTCPayServer.Services.Stores;
 using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
@@ -43,6 +44,11 @@ public sealed class PayjoinStoreSettingsRepository : IPayjoinStoreSettingsReposi
 
     public async Task SetAsync(string storeId, PayjoinStoreSettings settings)
     {
+        if (settings is null)
+        {
+            throw new ArgumentNullException(nameof(settings));
+        }
+
         var store = await _storeRepository.FindStore(storeId).ConfigureAwait(false);
         if (store is null)
         {
