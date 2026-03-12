@@ -1,11 +1,12 @@
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
+using Payjoin;
+using Payjoin.Http;
 using System;
 using System.Collections.Concurrent;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using Payjoin;
 using SystemUri = System.Uri;
 
 namespace BTCPayServer.Plugins.Payjoin.Services;
@@ -56,8 +57,10 @@ public sealed class PayjoinOhttpKeysProvider
                 return ohttpKeys;
             }
 
+            //var ohttpKeysClient = new OhttpKeysClient(_httpClientFactory.CreateClient(nameof(PayjoinOhttpKeysProvider)));
+            using var ohttpKeysClient = new OhttpKeysClient(ohttpRelayUrl, certificate?.ToArray());
             // TODO: Consider adding some retry logic and refreshing the keys on failure.
-            ohttpKeys = await FetchAndDecodeOhttpKeysViaRelayProxyAsync(ohttpRelayUrl, directoryUrl, certificate?.Span.ToArray(), cancellationToken).ConfigureAwait(false);
+            ohttpKeys = await ohttpKeysClient.GetOhttpKeysAsync(new SystemUri(directoryUrl), cancellationToken).ConfigureAwait(false);
 
             var cacheOptions = new MemoryCacheEntryOptions()
                 .SetAbsoluteExpiration(OhttpKeysCacheDuration)
@@ -74,35 +77,5 @@ public sealed class PayjoinOhttpKeysProvider
         {
             semaphore.Release();
         }
-    }
-
-    private static async Task<OhttpKeys> FetchAndDecodeOhttpKeysViaRelayProxyAsync(SystemUri ohttpRelay, string directory, byte[]? cert, CancellationToken cancellationToken = default)
-    {
-        var keysUrl = new SystemUri(new SystemUri(directory), "/.well-known/ohttp-gateway");
-
-        using var handler = new HttpClientHandler
-        {
-            Proxy = new System.Net.WebProxy(ohttpRelay),
-            UseProxy = true,
-            CheckCertificateRevocationList = true
-        };
-
-        if (cert is not null && cert is { Length: > 0 })
-        {
-            handler.ServerCertificateCustomValidationCallback = (_, serverCert, _, _) =>
-                serverCert is not null &&
-                cert.AsSpan().SequenceEqual(serverCert.GetRawCertData());
-        }
-
-        //var client = _httpClientFactory.CreateClient(nameof(PayjoinOhttpKeysProvider));
-        using var client = new HttpClient(handler);
-        using var request = new HttpRequestMessage(HttpMethod.Get, keysUrl);
-        request.Headers.Accept.ParseAdd("application/ohttp-keys");
-
-        using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
-
-        var body = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
-        return OhttpKeys.Decode(body);
     }
 }

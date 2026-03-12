@@ -7,6 +7,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using NBitcoin;
 using NBXplorer;
+using NBXplorer.DerivationStrategy;
 using Payjoin;
 using System;
 using System.Collections.Generic;
@@ -36,6 +37,15 @@ public sealed class PayjoinReceiverPoller : BackgroundService
     private static readonly Action<ILogger, string, string, Exception?> LogPayjoinReceiverReplayFailed =
         LoggerMessage.Define<string, string>(LogLevel.Warning, new EventId(5, nameof(LogPayjoinReceiverReplayFailed)),
             "Payjoin receiver replay failed for {InvoiceId}: {Message}");
+    private static readonly Action<ILogger, string, Exception?> LogPayjoinReceiverWithOutputSubstitution =
+        LoggerMessage.Define<string>(LogLevel.Information, new EventId(6, nameof(LogPayjoinReceiverWithOutputSubstitution)),
+            "Payjoin receiver prepared proposal with output substitution for {InvoiceId}");
+    private static readonly Action<ILogger, string, Exception?> LogPayjoinReceiverWithoutOutputSubstitution =
+        LoggerMessage.Define<string>(LogLevel.Information, new EventId(7, nameof(LogPayjoinReceiverWithoutOutputSubstitution)),
+            "Payjoin receiver prepared proposal without output substitution for {InvoiceId}");
+    private static readonly Action<ILogger, string, string, Exception?> LogPayjoinReceiverOutputSubstitutionFailed =
+        LoggerMessage.Define<string, string>(LogLevel.Information, new EventId(8, nameof(LogPayjoinReceiverOutputSubstitutionFailed)),
+            "Payjoin receiver output substitution failed for {InvoiceId}: {Message}");
 
     private readonly PayjoinReceiverSessionStore _sessionStore;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -271,9 +281,100 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         string invoiceId,
         CancellationToken stoppingToken)
     {
-        using var transition = proposal.CommitOutputs();
-        using var wantsInputs = transition.Save(persister);
-        await ProcessWantsInputsAsync(wantsInputs, persister, receiverScript, ohttpRelayUrl, storeId, invoiceId, stoppingToken).ConfigureAwait(false);
+        var drainScript = await GetReceiverDrainScriptAsync(storeId, invoiceId, receiverScript, stoppingToken).ConfigureAwait(false);
+
+        if (drainScript is not null)
+        {
+            var invoice = await _invoiceRepository.GetInvoice(invoiceId).ConfigureAwait(false);
+            var paymentMethodId = PaymentTypes.CHAIN.GetPaymentMethodId("BTC");
+            var prompt = invoice?.GetPaymentPrompt(paymentMethodId);
+
+            if (prompt is not null)
+            {
+                var due = prompt.Calculate().Due;
+                var amountSats = checked((ulong)Money.Coins(due).Satoshi);
+
+                try
+                {
+                    using var modified = proposal.ReplaceReceiverOutputs(
+                        new[]
+                        {
+                            new PlainTxOut(amountSats, receiverScript),
+                            new PlainTxOut(0, drainScript)
+                        },
+                        drainScript);
+                    using var transition = modified.CommitOutputs();
+                    using var wantsInputs = transition.Save(persister);
+                    await ProcessWantsInputsAsync(wantsInputs, persister, receiverScript, ohttpRelayUrl, storeId, invoiceId, stoppingToken).ConfigureAwait(false);
+                    LogPayjoinReceiverWithOutputSubstitution(_logger, invoiceId, null);
+
+                    return;
+                }
+                catch (OutputSubstitutionException ex)
+                {
+                    LogPayjoinReceiverOutputSubstitutionFailed(_logger, invoiceId, ex.Message, ex);
+                }
+            }
+        }
+
+        using var fallbackModified = proposal.SubstituteReceiverScript(receiverScript);
+        using var fallbackTransition = fallbackModified.CommitOutputs();
+        using var fallbackWantsInputs = fallbackTransition.Save(persister);
+        using var fallbackInputTransition = fallbackWantsInputs.CommitInputs();
+        using var fallbackWantsFeeRange = fallbackInputTransition.Save(persister);
+        await ProcessWantsFeeRangeAsync(fallbackWantsFeeRange, persister, receiverScript, ohttpRelayUrl, storeId, invoiceId, null, stoppingToken).ConfigureAwait(false);
+
+        LogPayjoinReceiverWithoutOutputSubstitution(_logger, invoiceId, null);
+    }
+
+    private async Task<byte[]?> GetReceiverDrainScriptAsync(
+        string storeId,
+        string invoiceId,
+        byte[] receiverScript,
+        CancellationToken cancellationToken)
+    {
+        var (_, coins) = await GetReceiverInputsAsync(storeId, invoiceId, cancellationToken).ConfigureAwait(false);
+        var drainScript = coins
+            .Select(c => c.ScriptPubKey.ToBytes())
+            .FirstOrDefault(script => script.Length > 0 && !script.SequenceEqual(receiverScript));
+        if (drainScript is not null)
+        {
+            return drainScript;
+        }
+
+        var network = _networkProvider.GetNetwork<BTCPayNetwork>("BTC");
+        if (network is null)
+        {
+            return null;
+        }
+
+        var store = await _storeRepository.FindStore(storeId).ConfigureAwait(false);
+        if (store is null)
+        {
+            return null;
+        }
+
+        var paymentMethodId = PaymentTypes.CHAIN.GetPaymentMethodId("BTC");
+        var derivationScheme = store.GetPaymentMethodConfig<DerivationSchemeSettings>(paymentMethodId, _handlers, true);
+        if (derivationScheme is null)
+        {
+            return null;
+        }
+
+        var client = _explorerClientProvider.GetExplorerClient(network);
+        var changeAddress = await client.GetUnusedAsync(derivationScheme.AccountDerivation, DerivationFeature.Change, 0, false, cancellationToken).ConfigureAwait(false);
+        if (changeAddress?.ScriptPubKey is null)
+        {
+            return null;
+        }
+
+        var changeScript = changeAddress.ScriptPubKey.ToBytes();
+        if (changeScript.SequenceEqual(receiverScript))
+        {
+            return null;
+        }
+
+        return changeScript;
     }
 
     private async Task ProcessWantsInputsAsync(
@@ -285,9 +386,90 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         string invoiceId,
         CancellationToken stoppingToken)
     {
-        using var transition = proposal.CommitInputs();
-        using var wantsFeeRange = transition.Save(persister);
-        await ProcessWantsFeeRangeAsync(wantsFeeRange, persister, receiverScript, ohttpRelayUrl, storeId, invoiceId, null, stoppingToken).ConfigureAwait(false);
+        var (receiverInputs, receiverCoins) = await GetReceiverInputsAsync(storeId, invoiceId, stoppingToken).ConfigureAwait(false);
+
+        WantsInputs? withInputs = null;
+        ReceivedCoin[]? contributedCoins = null;
+        try
+        {
+            var orderedCandidates = receiverCoins
+                .Select((coin, index) => new { coin, index })
+                .OrderBy(x => x.coin.Coin.Amount.Satoshi)
+                .Select(x => x.index);
+
+            foreach (var index in orderedCandidates)
+            {
+                try
+                {
+                    withInputs = proposal.ContributeInputs(new[] { receiverInputs[index] });
+                    contributedCoins = new[] { receiverCoins[index] };
+                    break;
+                }
+                catch (InputContributionException)
+                {
+                }
+            }
+
+            using var transition = (withInputs ?? proposal).CommitInputs();
+            using var wantsFeeRange = transition.Save(persister);
+            await ProcessWantsFeeRangeAsync(wantsFeeRange, persister, receiverScript, ohttpRelayUrl, storeId, invoiceId, contributedCoins, stoppingToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            withInputs?.Dispose();
+        }
+    }
+
+    private async Task<(InputPair[] Inputs, ReceivedCoin[] Coins)> GetReceiverInputsAsync(string storeId, string invoiceId, CancellationToken cancellationToken)
+    {
+        var network = _networkProvider.GetNetwork<BTCPayNetwork>("BTC");
+        if (network is null)
+        {
+            return (Array.Empty<InputPair>(), Array.Empty<ReceivedCoin>());
+        }
+
+        var store = await _storeRepository.FindStore(storeId).ConfigureAwait(false);
+        if (store is null)
+        {
+            return (Array.Empty<InputPair>(), Array.Empty<ReceivedCoin>());
+        }
+
+        var paymentMethodId = PaymentTypes.CHAIN.GetPaymentMethodId("BTC");
+        var derivationScheme = store.GetPaymentMethodConfig<DerivationSchemeSettings>(paymentMethodId, _handlers, true);
+        if (derivationScheme is null)
+        {
+            return (Array.Empty<InputPair>(), Array.Empty<ReceivedCoin>());
+        }
+
+        var wallet = _walletProvider.GetWallet(network);
+        if (wallet is null)
+        {
+            return (Array.Empty<InputPair>(), Array.Empty<ReceivedCoin>());
+        }
+
+        var confirmed = await wallet.GetUnspentCoins(derivationScheme.AccountDerivation, true, cancellationToken).ConfigureAwait(false);
+        var all = await wallet.GetUnspentCoins(derivationScheme.AccountDerivation, false, cancellationToken).ConfigureAwait(false);
+        var sourceCoins = confirmed.Length > 0 ? confirmed : all;
+        if (sourceCoins.Length == 0)
+        {
+            return (Array.Empty<InputPair>(), Array.Empty<ReceivedCoin>());
+        }
+
+        var inputs = sourceCoins
+            .Select(c =>
+            {
+                var txin = new PlainTxIn(
+                    new PlainOutPoint(c.OutPoint.Hash.ToString(), (uint)c.OutPoint.N),
+                    Array.Empty<byte>(),
+                    uint.MaxValue,
+                    Array.Empty<byte[]>());
+                var txout = new PlainTxOut(checked((ulong)c.Coin.Amount.Satoshi), c.ScriptPubKey.ToBytes());
+                var psbtIn = new PlainPsbtInput(txout, null, null);
+                return new InputPair(txin, psbtIn, null);
+            })
+            .ToArray();
+
+        return (inputs, sourceCoins);
     }
 
     private async Task ProcessWantsFeeRangeAsync(
@@ -341,7 +523,7 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         var rootedKeyPath = signingKeySettings.GetRootedKeyPath() ?? throw new InvalidOperationException("Wallet key path mismatch");
         var accountKey = signingKey.Derive(rootedKeyPath.KeyPath);
 
-        using var transition = proposal.FinalizeProposal(new SigningProcessPsbt(network.NBitcoinNetwork, derivationScheme, accountKey, rootedKeyPath, receiverCoins));
+        using var transition = proposal.FinalizeProposal(new SigningProcessPsbt(network.NBitcoinNetwork, derivationScheme, accountKey, client, receiverCoins));
         using var payjoinProposal = transition.Save(persister);
         await PostPayjoinProposalAsync(payjoinProposal, persister, ohttpRelayUrl, stoppingToken).ConfigureAwait(false);
     }
@@ -416,22 +598,20 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         private readonly Network _network;
         private readonly DerivationSchemeSettings _derivationScheme;
         private readonly ExtKey _accountKey;
-        private readonly RootedKeyPath _rootedKeyPath;
-        private readonly HashSet<OutPoint> _receiverOutPoints;
+        private readonly ExplorerClient _explorerClient;
         private readonly Dictionary<OutPoint, KeyPath> _receiverKeyPaths;
 
         public SigningProcessPsbt(
             Network network,
             DerivationSchemeSettings derivationScheme,
             ExtKey accountKey,
-            RootedKeyPath rootedKeyPath,
+            ExplorerClient explorerClient,
             ReceivedCoin[]? receiverCoins)
         {
             _network = network;
             _derivationScheme = derivationScheme;
             _accountKey = accountKey;
-            _rootedKeyPath = rootedKeyPath;
-            _receiverOutPoints = new HashSet<OutPoint>();
+            _explorerClient = explorerClient;
             _receiverKeyPaths = new Dictionary<OutPoint, KeyPath>();
 
             if (receiverCoins is null)
@@ -441,7 +621,6 @@ public sealed class PayjoinReceiverPoller : BackgroundService
 
             foreach (var coin in receiverCoins)
             {
-                _receiverOutPoints.Add(coin.OutPoint);
                 _receiverKeyPaths[coin.OutPoint] = coin.KeyPath;
             }
         }
@@ -450,22 +629,38 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         {
             var proposalPsbt = PSBT.Parse(psbt, _network);
 
+            var updated = _explorerClient.UpdatePSBTAsync(new NBXplorer.Models.UpdatePSBTRequest
+            {
+                PSBT = proposalPsbt,
+                DerivationScheme = _derivationScheme.AccountDerivation
+            }).GetAwaiter().GetResult();
+            if (updated?.PSBT is not null)
+            {
+                proposalPsbt = updated.PSBT;
+            }
+
             for (var i = 0; i < proposalPsbt.Inputs.Count; i++)
             {
                 var input = proposalPsbt.Inputs[i];
-                var outpoint = input.PrevOut;
-                if (!_receiverOutPoints.Contains(outpoint) || !_receiverKeyPaths.TryGetValue(outpoint, out var coinKeyPath))
+                if (!_receiverKeyPaths.TryGetValue(input.PrevOut, out var coinKeyPath))
                 {
                     continue;
                 }
 
-                var fullPath = _rootedKeyPath.KeyPath.Derive(coinKeyPath);
                 var childKey = _accountKey.Derive(coinKeyPath);
-                input.HDKeyPaths.Add(childKey.GetPublicKey(), new RootedKeyPath(_rootedKeyPath.MasterFingerprint, fullPath));
+                input.Sign(childKey.PrivateKey);
+                input.TryFinalizeInput(out _);
             }
 
-            proposalPsbt.SignAll(_derivationScheme.AccountDerivation, _accountKey, _rootedKeyPath);
-            proposalPsbt.TryFinalize(out _);
+            foreach (var input in proposalPsbt.Inputs)
+            {
+                input.HDKeyPaths.Clear();
+            }
+
+            foreach (var output in proposalPsbt.Outputs)
+            {
+                output.HDKeyPaths.Clear();
+            }
 
             return proposalPsbt.ToBase64();
         }

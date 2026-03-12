@@ -10,6 +10,7 @@ using BTCPayServer.Services.Stores;
 using BTCPayServer.Services.Wallets;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using NBitcoin;
 using NBXplorer;
 using NBXplorer.Models;
@@ -29,6 +30,10 @@ namespace BTCPayServer.Plugins.Payjoin.Controllers;
 [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = Policies.CanViewProfile)]
 public class UIPayJoinController : Controller
 {
+    private static readonly Action<ILogger, string, string, Exception?> LogPayjoinSenderBroadcasted =
+        LoggerMessage.Define<string, string>(LogLevel.Information, new EventId(1, nameof(LogPayjoinSenderBroadcasted)),
+            "Payjoin sender broadcasted payjoin transaction {TransactionId} for {InvoiceId}");
+
     private readonly BTCPayServerEnvironment _env;
     private readonly InvoiceRepository _invoiceRepository;
     private readonly StoreRepository _storeRepository;
@@ -41,6 +46,7 @@ public class UIPayJoinController : Controller
     private readonly PayjoinBip21Service _bip21Service;
     private readonly ExplorerClientProvider _explorerClientProvider;
     private readonly BTCPayWalletProvider _walletProvider;
+    private readonly ILogger<UIPayJoinController>? _logger;
 
     public UIPayJoinController(
         BTCPayServerEnvironment env,
@@ -54,7 +60,8 @@ public class UIPayJoinController : Controller
         IPayjoinStoreSettingsRepository storeSettingsRepository,
         PayjoinBip21Service bip21Service,
         ExplorerClientProvider explorerClientProvider,
-        BTCPayWalletProvider walletProvider)
+        BTCPayWalletProvider walletProvider,
+        ILogger<UIPayJoinController>? logger = null)
     {
         _env = env;
         _invoiceRepository = invoiceRepository;
@@ -68,6 +75,7 @@ public class UIPayJoinController : Controller
         _bip21Service = bip21Service;
         _explorerClientProvider = explorerClientProvider;
         _walletProvider = walletProvider;
+        _logger = logger;
     }
 
     [AllowAnonymous]
@@ -421,6 +429,21 @@ public class UIPayJoinController : Controller
         if (!broadcast.Success)
         {
             return Ok(new { errorMessage = $"Broadcast failed: {broadcast.RPCCode} {broadcast.RPCCodeMessage} {broadcast.RPCMessage}" });
+        }
+
+        if (_logger is not null)
+        {
+            LogPayjoinSenderBroadcasted(_logger, transaction.GetHash().ToString(), request.InvoiceId, null);
+        }
+
+        if (_env.CheatMode)
+        {
+            var rpc = client.RPCClient;
+            if (rpc is not null)
+            {
+                var rewardAddress = await rpc.GetNewAddressAsync(cancellationToken).ConfigureAwait(false);
+                await rpc.GenerateToAddressAsync(1, rewardAddress, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         return Ok(new { successMessage = $"Payjoin transaction broadcasted: {transaction.GetHash()}" });

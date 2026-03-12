@@ -2,6 +2,7 @@ using BTCPayServer.Plugins.Payjoin.Controllers;
 using BTCPayServer.Plugins.Payjoin.Models;
 using BTCPayServer.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Runtime.CompilerServices;
 using Xunit;
 
@@ -19,7 +20,7 @@ public class UIPayJoinControllerTests
     [Fact]
     public async Task GetBip21ReturnsBadRequestWhenInvoiceIdMissing()
     {
-        using var controller = new UIPayJoinController(null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
+        using var controller = new UIPayJoinController(null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, NullLogger<UIPayJoinController>.Instance);
 
         var result = await controller.GetBip21(" ", "standard", TestContext.Current.CancellationToken);
 
@@ -29,7 +30,7 @@ public class UIPayJoinControllerTests
     [Fact]
     public async Task RunTestPaymentReturnsNotFoundWhenCheatModeDisabled()
     {
-        using var controller = new UIPayJoinController(CreateEnvironment(false), null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
+        using var controller = new UIPayJoinController(CreateEnvironment(false), null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, NullLogger<UIPayJoinController>.Instance);
 
         var result = await controller.RunTestPayment(new RunTestPaymentRequest
         {
