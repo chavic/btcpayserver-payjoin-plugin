@@ -117,6 +117,7 @@ public class UIPayJoinController : Controller
             enablePayjoin,
             invoice.Id,
             invoice.StoreId,
+            invoice.MonitoringExpiration,
             cancellationToken).ConfigureAwait(false);
 
         var actualPayjoinEnabled = IsPayjoinEnabled(bip21);

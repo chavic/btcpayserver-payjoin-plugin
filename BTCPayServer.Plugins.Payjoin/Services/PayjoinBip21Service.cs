@@ -41,6 +41,7 @@ public sealed class PayjoinBip21Service
         bool enablePayjoin,
         string invoiceId,
         string storeId,
+        DateTimeOffset monitoringExpiresAt,
         CancellationToken cancellationToken)
     {
         var network = _networkProvider.GetNetwork<BTCPayNetwork>(cryptoCode);
@@ -78,7 +79,13 @@ public sealed class PayjoinBip21Service
 
         try
         {
-            var session = _receiverSessionStore.CreateSession(invoiceId, destination, storeId, ohttpRelayUrl, out var created);
+            var session = _receiverSessionStore.CreateSession(
+                invoiceId,
+                destination,
+                storeId,
+                ohttpRelayUrl,
+                monitoringExpiresAt,
+                out var created);
             var persister = PayjoinReceiverSessionStore.CreatePersister(session);
 
             if (created)

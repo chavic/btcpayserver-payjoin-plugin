@@ -10,7 +10,6 @@ using NBXplorer;
 using NBXplorer.DerivationStrategy;
 using Payjoin;
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -46,6 +45,9 @@ public sealed class PayjoinReceiverPoller : BackgroundService
     private static readonly Action<ILogger, string, string, Exception?> LogPayjoinReceiverOutputSubstitutionFailed =
         LoggerMessage.Define<string, string>(LogLevel.Information, new EventId(8, nameof(LogPayjoinReceiverOutputSubstitutionFailed)),
             "Payjoin receiver output substitution failed for {InvoiceId}: {Message}");
+    private static readonly Action<ILogger, string, string, Exception?> LogPayjoinReceiverSessionRemoved =
+        LoggerMessage.Define<string, string>(LogLevel.Information, new EventId(9, nameof(LogPayjoinReceiverSessionRemoved)),
+            "Payjoin receiver session removed for {InvoiceId}: {Reason}");
 
     private readonly PayjoinReceiverSessionStore _sessionStore;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -150,6 +152,11 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         using var replayScope = replay;
         using var state = replayScope.State();
 
+        if (TryExpireSession(session))
+        {
+            return;
+        }
+
         switch (state)
         {
             case ReceiveSession.Initialized initialized:
@@ -182,7 +189,40 @@ public sealed class PayjoinReceiverPoller : BackgroundService
             case ReceiveSession.PayjoinProposal payjoinProposal:
                 await PostPayjoinProposalAsync(payjoinProposal.inner, persister, session.OhttpRelayUrl, stoppingToken).ConfigureAwait(false);
                 break;
+            case ReceiveSession.Monitor:
+                break;
+            case ReceiveSession.Closed:
+                RemoveSession(session.InvoiceId, "receiver session closed");
+                break;
         }
+    }
+
+    private bool TryExpireSession(PayjoinReceiverSessionState session)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var deadline = GetCleanupDeadline(session);
+        if (now >= deadline)
+        {
+            return RemoveSession(session.InvoiceId, $"cleanup deadline reached at {deadline:O}");
+        }
+
+        return false;
+    }
+
+    private static DateTimeOffset GetCleanupDeadline(PayjoinReceiverSessionState session)
+    {
+        return session.MonitoringExpiresAt;
+    }
+
+    private bool RemoveSession(string invoiceId, string reason)
+    {
+        if (!_sessionStore.RemoveSession(invoiceId))
+        {
+            return false;
+        }
+
+        LogPayjoinReceiverSessionRemoved(_logger, invoiceId, reason, null);
+        return true;
     }
 
     private async Task PollInitializedAsync(
@@ -522,10 +562,67 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         var signingKeySettings = derivationScheme.GetAccountKeySettingsFromRoot(signingKey) ?? throw new InvalidOperationException("Wallet key settings not available");
         var rootedKeyPath = signingKeySettings.GetRootedKeyPath() ?? throw new InvalidOperationException("Wallet key path mismatch");
         var accountKey = signingKey.Derive(rootedKeyPath.KeyPath);
+        var psbtToSign = proposal.PsbtToSign();
+        var proposalPsbt = PSBT.Parse(psbtToSign, network.NBitcoinNetwork);
 
-        using var transition = proposal.FinalizeProposal(new SigningProcessPsbt(network.NBitcoinNetwork, derivationScheme, accountKey, client, receiverCoins));
+        var updated = await client.UpdatePSBTAsync(new NBXplorer.Models.UpdatePSBTRequest
+        {
+            PSBT = proposalPsbt,
+            DerivationScheme = derivationScheme.AccountDerivation
+        }, stoppingToken).ConfigureAwait(false);
+        if (updated?.PSBT is not null)
+        {
+            proposalPsbt = updated.PSBT;
+        }
+
+        foreach (var input in proposalPsbt.Inputs)
+        {
+            if (receiverCoins is null || !TryGetReceiverKeyPath(receiverCoins, input.PrevOut, out var coinKeyPath))
+            {
+                continue;
+            }
+
+            var childKey = accountKey.Derive(coinKeyPath);
+            input.Sign(childKey.PrivateKey);
+            input.TryFinalizeInput(out _);
+        }
+
+        foreach (var input in proposalPsbt.Inputs)
+        {
+            input.HDKeyPaths.Clear();
+        }
+
+        foreach (var output in proposalPsbt.Outputs)
+        {
+            output.HDKeyPaths.Clear();
+        }
+
+        using var transition = proposal.FinalizeProposal(new SigningProcessPsbt(psbtToSign, proposalPsbt.ToBase64()));
         using var payjoinProposal = transition.Save(persister);
         await PostPayjoinProposalAsync(payjoinProposal, persister, ohttpRelayUrl, stoppingToken).ConfigureAwait(false);
+    }
+
+    private static bool TryGetReceiverKeyPath(ReceivedCoin[]? receiverCoins, OutPoint prevOut, out KeyPath coinKeyPath)
+    {
+        coinKeyPath = default!;
+
+        if (receiverCoins is null)
+        {
+            return false;
+        }
+
+        foreach (var coin in receiverCoins)
+        {
+            if (coin.OutPoint != prevOut)
+            {
+                continue;
+            }
+
+            coinKeyPath = coin.KeyPath;
+            return true;
+        }
+
+        return false;
     }
 
     private async Task PostPayjoinProposalAsync(
@@ -595,74 +692,23 @@ public sealed class PayjoinReceiverPoller : BackgroundService
 
     private sealed class SigningProcessPsbt : ProcessPsbt
     {
-        private readonly Network _network;
-        private readonly DerivationSchemeSettings _derivationScheme;
-        private readonly ExtKey _accountKey;
-        private readonly ExplorerClient _explorerClient;
-        private readonly Dictionary<OutPoint, KeyPath> _receiverKeyPaths;
+        private readonly string _expectedPsbt;
+        private readonly string _signedPsbt;
 
-        public SigningProcessPsbt(
-            Network network,
-            DerivationSchemeSettings derivationScheme,
-            ExtKey accountKey,
-            ExplorerClient explorerClient,
-            ReceivedCoin[]? receiverCoins)
+        public SigningProcessPsbt(string expectedPsbt, string signedPsbt)
         {
-            _network = network;
-            _derivationScheme = derivationScheme;
-            _accountKey = accountKey;
-            _explorerClient = explorerClient;
-            _receiverKeyPaths = new Dictionary<OutPoint, KeyPath>();
-
-            if (receiverCoins is null)
-            {
-                return;
-            }
-
-            foreach (var coin in receiverCoins)
-            {
-                _receiverKeyPaths[coin.OutPoint] = coin.KeyPath;
-            }
+            _expectedPsbt = expectedPsbt;
+            _signedPsbt = signedPsbt;
         }
 
         public string Callback(string psbt)
         {
-            var proposalPsbt = PSBT.Parse(psbt, _network);
-
-            var updated = _explorerClient.UpdatePSBTAsync(new NBXplorer.Models.UpdatePSBTRequest
+            if (!string.Equals(psbt, _expectedPsbt, StringComparison.Ordinal))
             {
-                PSBT = proposalPsbt,
-                DerivationScheme = _derivationScheme.AccountDerivation
-            }).GetAwaiter().GetResult();
-            if (updated?.PSBT is not null)
-            {
-                proposalPsbt = updated.PSBT;
+                throw new InvalidOperationException("Provisional proposal PSBT changed before signing.");
             }
 
-            for (var i = 0; i < proposalPsbt.Inputs.Count; i++)
-            {
-                var input = proposalPsbt.Inputs[i];
-                if (!_receiverKeyPaths.TryGetValue(input.PrevOut, out var coinKeyPath))
-                {
-                    continue;
-                }
-
-                var childKey = _accountKey.Derive(coinKeyPath);
-                input.Sign(childKey.PrivateKey);
-                input.TryFinalizeInput(out _);
-            }
-
-            foreach (var input in proposalPsbt.Inputs)
-            {
-                input.HDKeyPaths.Clear();
-            }
-
-            foreach (var output in proposalPsbt.Outputs)
-            {
-                output.HDKeyPaths.Clear();
-            }
-
-            return proposalPsbt.ToBase64();
+            return _signedPsbt;
         }
     }
 }
