@@ -36,15 +36,15 @@ public sealed class PayjoinReceiverPoller : BackgroundService
     private static readonly Action<ILogger, string, string, Exception?> LogPayjoinReceiverReplayFailed =
         LoggerMessage.Define<string, string>(LogLevel.Warning, new EventId(5, nameof(LogPayjoinReceiverReplayFailed)),
             "Payjoin receiver replay failed for {InvoiceId}: {Message}");
-    private static readonly Action<ILogger, string, Exception?> LogPayjoinReceiverWithOutputSubstitution =
-        LoggerMessage.Define<string>(LogLevel.Information, new EventId(6, nameof(LogPayjoinReceiverWithOutputSubstitution)),
-            "Payjoin receiver prepared proposal with output substitution for {InvoiceId}");
-    private static readonly Action<ILogger, string, Exception?> LogPayjoinReceiverWithoutOutputSubstitution =
-        LoggerMessage.Define<string>(LogLevel.Information, new EventId(7, nameof(LogPayjoinReceiverWithoutOutputSubstitution)),
-            "Payjoin receiver prepared proposal without output substitution for {InvoiceId}");
-    private static readonly Action<ILogger, string, string, Exception?> LogPayjoinReceiverOutputSubstitutionFailed =
-        LoggerMessage.Define<string, string>(LogLevel.Information, new EventId(8, nameof(LogPayjoinReceiverOutputSubstitutionFailed)),
-            "Payjoin receiver output substitution failed for {InvoiceId}: {Message}");
+    private static readonly Action<ILogger, string, Exception?> LogPayjoinReceiverPreparedExactPaymentOutputs =
+        LoggerMessage.Define<string>(LogLevel.Information, new EventId(6, nameof(LogPayjoinReceiverPreparedExactPaymentOutputs)),
+            "Payjoin receiver prepared exact-payment outputs with dedicated receiver change for {InvoiceId}");
+    private static readonly Action<ILogger, string, Exception?> LogPayjoinReceiverExactPaymentOutputsUnavailable =
+        LoggerMessage.Define<string>(LogLevel.Warning, new EventId(7, nameof(LogPayjoinReceiverExactPaymentOutputsUnavailable)),
+            "Payjoin receiver exact-payment outputs unavailable for {InvoiceId}");
+    private static readonly Action<ILogger, string, string, Exception?> LogPayjoinReceiverExactPaymentOutputsFailed =
+        LoggerMessage.Define<string, string>(LogLevel.Warning, new EventId(8, nameof(LogPayjoinReceiverExactPaymentOutputsFailed)),
+            "Payjoin receiver failed to prepare exact-payment outputs for {InvoiceId}: {Message}");
     private static readonly Action<ILogger, string, string, Exception?> LogPayjoinReceiverSessionRemoved =
         LoggerMessage.Define<string, string>(LogLevel.Information, new EventId(9, nameof(LogPayjoinReceiverSessionRemoved)),
             "Payjoin receiver session removed for {InvoiceId}: {Reason}");
@@ -111,7 +111,7 @@ public sealed class PayjoinReceiverPoller : BackgroundService
                 catch (UniffiException ex)
                 {
                     LogPayjoinReceiverPollingFailedForInvoice(_logger, session.InvoiceId, ex);
-                    _sessionStore.RemoveSession(session.InvoiceId);
+                    RemoveSession(session.InvoiceId, "receiver session failed with uniffi error");
                 }
                 catch (Exception ex)
                 {
@@ -145,7 +145,7 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         catch (ReceiverReplayException ex)
         {
             LogPayjoinReceiverReplayFailed(_logger, session.InvoiceId, ex.Message, ex);
-            _sessionStore.RemoveSession(session.InvoiceId);
+            RemoveSession(session.InvoiceId, "receiver replay failed");
             return;
         }
 
@@ -321,65 +321,94 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         string invoiceId,
         CancellationToken stoppingToken)
     {
-        var drainScript = await GetReceiverDrainScriptAsync(storeId, invoiceId, receiverScript, stoppingToken).ConfigureAwait(false);
-
-        if (drainScript is not null)
+        var exactPaymentOutputs = await TryCreateExactPaymentReceiverOutputsAsync(storeId, invoiceId, receiverScript, stoppingToken).ConfigureAwait(false);
+        if (exactPaymentOutputs is null)
         {
-            var invoice = await _invoiceRepository.GetInvoice(invoiceId).ConfigureAwait(false);
-            var paymentMethodId = PaymentTypes.CHAIN.GetPaymentMethodId("BTC");
-            var prompt = invoice?.GetPaymentPrompt(paymentMethodId);
-
-            if (prompt is not null)
-            {
-                var due = prompt.Calculate().Due;
-                var amountSats = checked((ulong)Money.Coins(due).Satoshi);
-
-                try
-                {
-                    using var modified = proposal.ReplaceReceiverOutputs(
-                        new[]
-                        {
-                            new PlainTxOut(amountSats, receiverScript),
-                            new PlainTxOut(0, drainScript)
-                        },
-                        drainScript);
-                    using var transition = modified.CommitOutputs();
-                    using var wantsInputs = transition.Save(persister);
-                    await ProcessWantsInputsAsync(wantsInputs, persister, receiverScript, ohttpRelayUrl, storeId, invoiceId, stoppingToken).ConfigureAwait(false);
-                    LogPayjoinReceiverWithOutputSubstitution(_logger, invoiceId, null);
-
-                    return;
-                }
-                catch (OutputSubstitutionException ex)
-                {
-                    LogPayjoinReceiverOutputSubstitutionFailed(_logger, invoiceId, ex.Message, ex);
-                }
-            }
+            LogPayjoinReceiverExactPaymentOutputsUnavailable(_logger, invoiceId, null);
+            RemoveSession(invoiceId, "exact-payment outputs unavailable");
+            return;
         }
 
-        using var fallbackModified = proposal.SubstituteReceiverScript(receiverScript);
-        using var fallbackTransition = fallbackModified.CommitOutputs();
-        using var fallbackWantsInputs = fallbackTransition.Save(persister);
-        using var fallbackInputTransition = fallbackWantsInputs.CommitInputs();
-        using var fallbackWantsFeeRange = fallbackInputTransition.Save(persister);
-        await ProcessWantsFeeRangeAsync(fallbackWantsFeeRange, persister, receiverScript, ohttpRelayUrl, storeId, invoiceId, null, stoppingToken).ConfigureAwait(false);
-
-        LogPayjoinReceiverWithoutOutputSubstitution(_logger, invoiceId, null);
+        try
+        {
+            using var modified = proposal.ReplaceReceiverOutputs(exactPaymentOutputs.Value.ExactPaymentOutputs, exactPaymentOutputs.Value.ReceiverChangeScript);
+            using var transition = modified.CommitOutputs();
+            using var wantsInputs = transition.Save(persister);
+            LogPayjoinReceiverPreparedExactPaymentOutputs(_logger, invoiceId, null);
+            await ProcessWantsInputsAsync(wantsInputs, persister, receiverScript, ohttpRelayUrl, storeId, invoiceId, stoppingToken).ConfigureAwait(false);
+        }
+        catch (OutputSubstitutionException ex)
+        {
+            LogPayjoinReceiverExactPaymentOutputsFailed(_logger, invoiceId, ex.Message, ex);
+            RemoveSession(invoiceId, "failed to prepare exact-payment outputs");
+        }
     }
 
-    private async Task<byte[]?> GetReceiverDrainScriptAsync(
+    private async Task<(PlainTxOut[] ExactPaymentOutputs, byte[] ReceiverChangeScript)?> TryCreateExactPaymentReceiverOutputsAsync(
+        string storeId,
+        string invoiceId,
+        byte[] receiverScript,
+        CancellationToken cancellationToken)
+    {
+        // TODO: Add an explicit rust-payjoin / payjoin-ffi API for reading receiver outputs or original PSBT data.
+        // TODO: Replace the invoice.Due fallback below with values read directly from the incoming payjoin proposal.
+        // TODO: Validate that the invoice amount matches the receiver amount in the incoming proposal before building replacement outputs.
+        var receiverChangeScript = await GetReceiverChangeScriptAsync(storeId, invoiceId, receiverScript, cancellationToken).ConfigureAwait(false);
+        if (receiverChangeScript is null)
+        {
+            return null;
+        }
+
+        var exactPaymentAmountSats = await TryGetExactPaymentAmountSatsAsync(invoiceId).ConfigureAwait(false);
+        if (exactPaymentAmountSats is null)
+        {
+            return null;
+        }
+
+        return CreateExactPaymentReceiverOutputs(exactPaymentAmountSats.Value, receiverScript, receiverChangeScript);
+    }
+
+    private async Task<ulong?> TryGetExactPaymentAmountSatsAsync(string invoiceId)
+    {
+        var invoice = await _invoiceRepository.GetInvoice(invoiceId).ConfigureAwait(false);
+        var paymentMethodId = PaymentTypes.CHAIN.GetPaymentMethodId("BTC");
+        var prompt = invoice?.GetPaymentPrompt(paymentMethodId);
+        if (prompt is null)
+        {
+            return null;
+        }
+
+        var due = prompt.Calculate().Due;
+        return checked((ulong)Money.Coins(due).Satoshi);
+    }
+
+    private static (PlainTxOut[] ExactPaymentOutputs, byte[] ReceiverChangeScript) CreateExactPaymentReceiverOutputs(
+        ulong exactPaymentAmountSats,
+        byte[] receiverScript,
+        byte[] receiverChangeScript)
+    {
+        return (
+            new[]
+            {
+                new PlainTxOut(exactPaymentAmountSats, receiverScript),
+                new PlainTxOut(0, receiverChangeScript)
+            },
+            receiverChangeScript);
+    }
+
+    private async Task<byte[]?> GetReceiverChangeScriptAsync(
         string storeId,
         string invoiceId,
         byte[] receiverScript,
         CancellationToken cancellationToken)
     {
         var (_, coins) = await GetReceiverInputsAsync(storeId, invoiceId, cancellationToken).ConfigureAwait(false);
-        var drainScript = coins
+        var receiverChangeScript = coins
             .Select(c => c.ScriptPubKey.ToBytes())
             .FirstOrDefault(script => script.Length > 0 && !script.SequenceEqual(receiverScript));
-        if (drainScript is not null)
+        if (receiverChangeScript is not null)
         {
-            return drainScript;
+            return receiverChangeScript;
         }
 
         var network = _networkProvider.GetNetwork<BTCPayNetwork>("BTC");
@@ -403,18 +432,19 @@ public sealed class PayjoinReceiverPoller : BackgroundService
 
         var client = _explorerClientProvider.GetExplorerClient(network);
         var changeAddress = await client.GetUnusedAsync(derivationScheme.AccountDerivation, DerivationFeature.Change, 0, false, cancellationToken).ConfigureAwait(false);
-        if (changeAddress?.ScriptPubKey is null)
+        var generatedReceiverChangeScriptPubKey = changeAddress?.ScriptPubKey;
+        if (generatedReceiverChangeScriptPubKey is null)
         {
             return null;
         }
 
-        var changeScript = changeAddress.ScriptPubKey.ToBytes();
-        if (changeScript.SequenceEqual(receiverScript))
+        var generatedReceiverChangeScript = generatedReceiverChangeScriptPubKey.ToBytes();
+        if (generatedReceiverChangeScript.SequenceEqual(receiverScript))
         {
             return null;
         }
 
-        return changeScript;
+        return generatedReceiverChangeScript;
     }
 
     private async Task ProcessWantsInputsAsync(
@@ -432,6 +462,8 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         ReceivedCoin[]? contributedCoins = null;
         try
         {
+            // TODO: Restore `proposal.TryPreservingPrivacy(receiverInputs)` only after rust-payjoin/payjoin-ffi lets us identify which `ReceivedCoin` was actually selected.
+            // TODO: We must pass only the truly contributed coin(s) into `contributedCoins`; otherwise the signing step can treat unrelated wallet inputs as receiver-owned and produce an invalid proposal.
             var orderedCandidates = receiverCoins
                 .Select((coin, index) => new { coin, index })
                 .OrderBy(x => x.coin.Coin.Amount.Satoshi)
@@ -450,7 +482,13 @@ public sealed class PayjoinReceiverPoller : BackgroundService
                 }
             }
 
-            using var transition = (withInputs ?? proposal).CommitInputs();
+            if (withInputs is null || contributedCoins is null)
+            {
+                RemoveSession(invoiceId, "no receiver input available for payjoin contribution");
+                return;
+            }
+
+            using var transition = withInputs.CommitInputs();
             using var wantsFeeRange = transition.Save(persister);
             await ProcessWantsFeeRangeAsync(wantsFeeRange, persister, receiverScript, ohttpRelayUrl, storeId, invoiceId, contributedCoins, stoppingToken).ConfigureAwait(false);
         }
