@@ -17,6 +17,7 @@
     <AddRazorSupportForMvc>true</AddRazorSupportForMvc>
     <PreserveCompilationContext>false</PreserveCompilationContext>
     <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
     <AnalysisLevel>6.0-all</AnalysisLevel>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -27,16 +28,6 @@
     <TreatWarningsAsErrors>True</TreatWarningsAsErrors>
     <WarningLevel>9999</WarningLevel>
   </PropertyGroup>
-
-  <!-- This will make sure that referencing BTCPayServer doesn't put any artifact in the published directory -->
-  <ItemDefinitionGroup>
-    <ProjectReference>
-      <Properties>StaticWebAssetsEnabled=false</Properties>
-      <Private>false</Private>
-      <ExcludeAssets>runtime;native;build;buildTransitive;contentFiles</ExcludeAssets>
-    </ProjectReference>
-  </ItemDefinitionGroup>
-
 
   <!-- If you need Entity Framework, you can uncomment this. This will make it usable in your project without publishing assemblies
   already referenced by BTCPay Server Core project -->
@@ -61,8 +52,12 @@
   </ItemGroup>
   -->
 
+  <!-- Private=false and ExcludeAssets ensure BTCPayServer artifacts are not copied into the published plugin. -->
   <ItemGroup>
-    <ProjectReference Include="..\btcpayserver\BTCPayServer\BTCPayServer.csproj" />
+    <ProjectReference Include="..\btcpayserver\BTCPayServer\BTCPayServer.csproj">
+      <Private>false</Private>
+      <ExcludeAssets>runtime;native;build;buildTransitive;contentFiles</ExcludeAssets>
+    </ProjectReference>
     <EmbeddedResource Include="Resources\**" />
   </ItemGroup>
 

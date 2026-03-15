@@ -121,7 +121,11 @@ public class UIPayJoinController : Controller
             cancellationToken).ConfigureAwait(false);
 
         var actualPayjoinEnabled = IsPayjoinEnabled(bip21);
-        return Ok(new { bip21, payjoinEnabled = actualPayjoinEnabled });
+        return Ok(new GetBip21Response
+        {
+            Bip21 = bip21,
+            PayjoinEnabled = actualPayjoinEnabled
+        });
     }
 
     private static bool IsPayjoinEnabled(string paymentUrl)
@@ -145,7 +149,7 @@ public class UIPayJoinController : Controller
     [AllowAnonymous]
     [IgnoreAntiforgeryToken]
     [HttpPost("run-test-payment")]
-    public async Task<IActionResult> RunTestPayment([FromBody] RunTestPaymentRequest request, CancellationToken cancellationToken)
+    public async Task<ActionResult<RunTestPaymentResponse>> RunTestPayment([FromBody] RunTestPaymentRequest request, CancellationToken cancellationToken)
     {
         if (!_env.CheatMode)
         {
@@ -159,30 +163,30 @@ public class UIPayJoinController : Controller
 
         if (string.IsNullOrWhiteSpace(request.InvoiceId))
         {
-            return Ok(new { errorMessage = "invoiceId is required" });
+            return RunTestPaymentFailure("invoiceId is required");
         }
 
         if (request.PaymentUrl is null)
         {
-            return Ok(new { errorMessage = "paymentUrl is required" });
+            return RunTestPaymentFailure("paymentUrl is required");
         }
 
         var invoice = await _invoiceRepository.GetInvoice(request.InvoiceId).ConfigureAwait(false);
         if (invoice is null)
         {
-            return Ok(new { errorMessage = "invoice not found" });
+            return RunTestPaymentFailure("invoice not found");
         }
 
         var store = await _storeRepository.FindStore(invoice.StoreId).ConfigureAwait(false);
         if (store is null)
         {
-            return Ok(new { errorMessage = "store not found" });
+            return RunTestPaymentFailure("store not found");
         }
 
         var storeSettings = await _storeSettingsRepository.GetAsync(invoice.StoreId).ConfigureAwait(false);
         if (storeSettings is null || storeSettings.OhttpRelayUrl is null)
         {
-            return Ok(new { errorMessage = "OhttpRelayUrl not found" });
+            return RunTestPaymentFailure("OhttpRelayUrl not found");
         }
 
         var cryptoCode = "BTC";
@@ -190,19 +194,19 @@ public class UIPayJoinController : Controller
         var derivationScheme = store.GetPaymentMethodConfig<DerivationSchemeSettings>(paymentMethodId, _handlers, true);
         if (derivationScheme is null)
         {
-            return Ok(new { errorMessage = "wallet not configured" });
+            return RunTestPaymentFailure("wallet not configured");
         }
 
         var network = _networkProvider.GetNetwork<BTCPayNetwork>(cryptoCode);
         if (network is null)
         {
-            return Ok(new { errorMessage = "network not available" });
+            return RunTestPaymentFailure("network not available");
         }
 
         var wallet = _walletProvider.GetWallet(network);
         if (wallet is null)
         {
-            return Ok(new { errorMessage = "wallet not available" });
+            return RunTestPaymentFailure("wallet not available");
         }
 
         var confirmedCoins = await wallet.GetUnspentCoins(derivationScheme.AccountDerivation, true, cancellationToken).ConfigureAwait(false);
@@ -220,7 +224,7 @@ public class UIPayJoinController : Controller
             var amountSats = parsedUri.AmountSats();
             if (amountSats is null)
             {
-                return Ok(new { errorMessage = "payment amount missing in paymentUrl" });
+                return RunTestPaymentFailure("payment amount missing in paymentUrl");
             }
 
             paymentAmount = Money.Satoshis(checked((long)amountSats.Value)).ToDecimal(MoneyUnit.BTC);
@@ -228,11 +232,11 @@ public class UIPayJoinController : Controller
         }
         catch (PjParseException ex)
         {
-            return Ok(new { errorMessage = $"Invalid BIP21 URI: {ex.Message}" });
+            return RunTestPaymentFailure($"Invalid BIP21 URI: {ex.Message}");
         }
         catch (PjNotSupported ex)
         {
-            return Ok(new { errorMessage = $"Payjoin not available in URI: {ex.Message}" });
+            return RunTestPaymentFailure($"Payjoin not available in URI: {ex.Message}");
         }
 
         var psbtRequest = new CreatePSBTRequest
@@ -249,7 +253,7 @@ public class UIPayJoinController : Controller
         var spendable = Math.Max(available - feeBuffer, 0.0m);
         if (spendable <= 0.0m)
         {
-            return Ok(new { errorMessage = "wallet funds too low for fees" });
+            return RunTestPaymentFailure("wallet funds too low for fees");
         }
 
         var amountToSend = Math.Min(paymentAmount, spendable);
@@ -272,12 +276,12 @@ public class UIPayJoinController : Controller
         }
         catch (NBXplorerException ex)
         {
-            return Ok(new { errorMessage = ex.Message });
+            return RunTestPaymentFailure(ex.Message);
         }
 
         if (createResult?.PSBT is null)
         {
-            return Ok(new { errorMessage = "psbt creation failed" });
+            return RunTestPaymentFailure("psbt creation failed");
         }
 
         var senderPsbtBase64 = createResult.PSBT.ToBase64();
@@ -349,33 +353,33 @@ public class UIPayJoinController : Controller
             }
             catch (BuildSenderException ex)
             {
-                return Ok(new { errorMessage = $"Sender build failed: {ex.Message}" });
+                return RunTestPaymentFailure($"Sender build failed: {ex.Message}");
             }
             catch (InvalidOperationException ex)
             {
-                return Ok(new { errorMessage = $"Sender failed: {ex.Message}" });
+                return RunTestPaymentFailure($"Sender failed: {ex.Message}");
             }
             catch (HttpRequestException ex)
             {
-                return Ok(new { errorMessage = $"Sender failed: {ex.Message}" });
+                return RunTestPaymentFailure($"Sender failed: {ex.Message}");
             }
             catch (TaskCanceledException ex)
             {
-                return Ok(new { errorMessage = $"Sender failed: {ex.Message}" });
+                return RunTestPaymentFailure($"Sender failed: {ex.Message}");
             }
             catch (SenderPersistedException.ResponseException ex)
             {
-                return Ok(new { errorMessage = $"Sender response invalid: {ex.Message}" });
+                return RunTestPaymentFailure($"Sender response invalid: {ex.Message}");
             }
             catch (SenderPersistedException ex)
             {
-                return Ok(new { errorMessage = $"Sender state failed: {ex.Message}" });
+                return RunTestPaymentFailure($"Sender state failed: {ex.Message}");
             }
         }
 
         if (string.IsNullOrWhiteSpace(proposalPsbtBase64))
         {
-            return Ok(new { errorMessage = "No payjoin proposal yet" });
+            return RunTestPaymentFailure("No payjoin proposal yet");
         }
 
         PSBT proposalPsbt;
@@ -385,11 +389,11 @@ public class UIPayJoinController : Controller
         }
         catch (FormatException ex)
         {
-            return Ok(new { errorMessage = $"Invalid PSBT: {ex.Message}" });
+            return RunTestPaymentFailure($"Invalid PSBT: {ex.Message}");
         }
         catch (ArgumentException ex)
         {
-            return Ok(new { errorMessage = $"Invalid PSBT: {ex.Message}" });
+            return RunTestPaymentFailure($"Invalid PSBT: {ex.Message}");
         }
 
         derivationScheme.RebaseKeyPaths(proposalPsbt);
@@ -402,7 +406,7 @@ public class UIPayJoinController : Controller
             var error = !derivationScheme.IsHotWallet
                 ? "cannot sign from a cold wallet"
                 : "wallet seed not available";
-            return Ok(new { errorMessage = error });
+            return RunTestPaymentFailure(error);
         }
 
         var signingKey = ExtKey.Parse(signingKeyStr, network.NBitcoinNetwork);
@@ -410,7 +414,7 @@ public class UIPayJoinController : Controller
         var rootedKeyPath = signingKeySettings?.GetRootedKeyPath();
         if (rootedKeyPath is null || signingKeySettings is null)
         {
-            return Ok(new { errorMessage = "wallet key path mismatch" });
+            return RunTestPaymentFailure("wallet key path mismatch");
         }
 
         proposalPsbt.RebaseKeyPaths(signingKeySettings.AccountKey, rootedKeyPath);
@@ -419,14 +423,14 @@ public class UIPayJoinController : Controller
 
         if (!proposalPsbt.TryFinalize(out _))
         {
-            return Ok(new { errorMessage = "PSBT could not be finalized" });
+            return RunTestPaymentFailure("PSBT could not be finalized");
         }
 
         var transaction = proposalPsbt.ExtractTransaction();
         var broadcast = await client.BroadcastAsync(transaction, cancellationToken).ConfigureAwait(false);
         if (!broadcast.Success)
         {
-            return Ok(new { errorMessage = $"Broadcast failed: {broadcast.RPCCode} {broadcast.RPCCodeMessage} {broadcast.RPCMessage}" });
+            return RunTestPaymentFailure($"Broadcast failed: {broadcast.RPCCode} {broadcast.RPCCodeMessage} {broadcast.RPCMessage}");
         }
 
         if (_logger is not null)
@@ -444,7 +448,17 @@ public class UIPayJoinController : Controller
             }
         }
 
-        return Ok(new { successMessage = $"Payjoin transaction broadcasted: {transaction.GetHash()}" });
+        return RunTestPaymentSuccess($"Payjoin transaction broadcasted: {transaction.GetHash()}");
+    }
+
+    private OkObjectResult RunTestPaymentFailure(string message)
+    {
+        return Ok(RunTestPaymentResponse.Failure(message));
+    }
+
+    private OkObjectResult RunTestPaymentSuccess(string message)
+    {
+        return Ok(RunTestPaymentResponse.Success(message));
     }
 
     private async Task<byte[]> SendRequestAsync(Request request, CancellationToken cancellationToken)
