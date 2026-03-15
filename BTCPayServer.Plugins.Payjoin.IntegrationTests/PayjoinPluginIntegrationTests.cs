@@ -1,5 +1,3 @@
-#nullable enable
-
 using BTCPayServer.Plugins.Payjoin.Controllers;
 using BTCPayServer.Plugins.Payjoin.Models;
 using BTCPayServer.Plugins.Payjoin.Services;
@@ -21,24 +19,26 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
     }
 
-    [Fact]
+    [Fact
+        (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
+    ]
     [Trait("Integration", "Integration")]
     public async Task CreateInvoiceAndPayItThroughThePayjoinPlugin()
     {
         using var tester = CreateServerTester(newDb: true);
-        await tester.StartAsync();
+        await tester.StartAsync().ConfigureAwait(true);
 
         var user = tester.NewAccount();
-        await user.GrantAccessAsync();
-        await user.RegisterDerivationSchemeAsync("BTC", ScriptPubKeyType.Segwit, true);
-        await user.ReceiveUTXO(Money.Coins(1.0m), tester.NetworkProvider.GetNetwork<BTCPayNetwork>("BTC"));
-        await user.ReceiveUTXO(Money.Coins(1.0m), tester.NetworkProvider.GetNetwork<BTCPayNetwork>("BTC"));
+        await user.GrantAccessAsync().ConfigureAwait(true);
+        await user.RegisterDerivationSchemeAsync("BTC", ScriptPubKeyType.Segwit, true).ConfigureAwait(true);
+        await user.ReceiveUTXO(Money.Coins(1.0m), tester.NetworkProvider.GetNetwork<BTCPayNetwork>("BTC")).ConfigureAwait(true);
+        await user.ReceiveUTXO(Money.Coins(1.0m), tester.NetworkProvider.GetNetwork<BTCPayNetwork>("BTC")).ConfigureAwait(true);
 
         var storeSettingsRepository = tester.PayTester.GetService<IPayjoinStoreSettingsRepository>();
         await storeSettingsRepository.SetAsync(user.StoreId, new PayjoinStoreSettings
         {
             EnabledByDefault = true
-        });
+        }).ConfigureAwait(true);
 
         var invoice = user.BitPay.CreateInvoice(new Invoice
         {
@@ -48,7 +48,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         });
 
         var paymentMethodId = PaymentTypes.CHAIN.GetPaymentMethodId("BTC");
-        var invoiceBeforePayment = await tester.PayTester.GetService<InvoiceRepository>().GetInvoice(invoice.Id);
+        var invoiceBeforePayment = await tester.PayTester.GetService<InvoiceRepository>().GetInvoice(invoice.Id).ConfigureAwait(true);
         Assert.NotNull(invoiceBeforePayment);
 
         var promptBeforePayment = invoiceBeforePayment!.GetPaymentPrompt(paymentMethodId);
@@ -57,7 +57,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         var expectedDue = promptBeforePayment!.Calculate().Due;
 
         var controller = tester.PayTester.GetController<UIPayJoinController>();
-        var bip21Result = Assert.IsType<OkObjectResult>(await controller.GetBip21(invoice.Id));
+        var bip21Result = Assert.IsType<OkObjectResult>(await controller.GetBip21(invoice.Id).ConfigureAwait(true));
         var bip21Response = Assert.IsType<GetBip21Response>(bip21Result.Value);
         Assert.True(bip21Response.PayjoinEnabled);
 
@@ -66,15 +66,15 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         {
             InvoiceId = invoice.Id,
             PaymentUrl = paymentUrl
-        }, default);
+        }, default).ConfigureAwait(true);
         var paymentResult = Assert.IsType<OkObjectResult>(paymentActionResult.Result);
         var paymentResponse = Assert.IsType<RunTestPaymentResponse>(paymentResult.Value);
         Assert.True(paymentResponse.Succeeded, paymentResponse.Message);
         Assert.False(string.IsNullOrWhiteSpace(paymentResponse.Message));
 
-        await user.WaitInvoicePaid(invoice.Id);
+        await user.WaitInvoicePaid(invoice.Id).ConfigureAwait(true);
 
-        var invoiceEntity = await tester.PayTester.GetService<InvoiceRepository>().GetInvoice(invoice.Id);
+        var invoiceEntity = await tester.PayTester.GetService<InvoiceRepository>().GetInvoice(invoice.Id).ConfigureAwait(true);
         Assert.NotNull(invoiceEntity);
         var totalPaid = invoiceEntity
             !

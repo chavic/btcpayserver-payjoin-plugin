@@ -37,6 +37,6 @@ public class UIPayJoinControllerTests
             InvoiceId = "invoice-1"
         }, TestContext.Current.CancellationToken);
 
-        Assert.IsType<NotFoundResult>(result);
+        Assert.IsType<NotFoundResult>(result.Result);
     }
 }
