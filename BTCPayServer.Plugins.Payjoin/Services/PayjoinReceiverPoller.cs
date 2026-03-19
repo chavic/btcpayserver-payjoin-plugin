@@ -85,6 +85,7 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         _logger = logger;
     }
 
+    // TODO: Process sessions concurrently instead of sequentially.
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
@@ -190,9 +191,11 @@ public sealed class PayjoinReceiverPoller : BackgroundService
             case ReceiveSession.WantsInputs wantsInputs:
                 await ProcessWantsInputsAsync(wantsInputs.inner, persister, receiverScript, session.OhttpRelayUrl, session.StoreId, session.InvoiceId, stoppingToken).ConfigureAwait(false);
                 break;
+            // TODO: Persist the contributed receiver input metadata in session state and restore it here.
             case ReceiveSession.WantsFeeRange wantsFeeRange:
                 await ProcessWantsFeeRangeAsync(wantsFeeRange.inner, persister, receiverScript, session.OhttpRelayUrl, session.StoreId, session.InvoiceId, null, stoppingToken).ConfigureAwait(false);
                 break;
+            // TODO: Persist the contributed receiver input metadata in session state and restore it here.
             case ReceiveSession.ProvisionalProposal provisionalProposal:
                 await ProcessProvisionalProposalAsync(provisionalProposal.inner, persister, receiverScript, session.OhttpRelayUrl, session.StoreId, session.InvoiceId, null, stoppingToken).ConfigureAwait(false);
                 break;
@@ -629,6 +632,7 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         ReceivedCoin[]? receiverCoins,
         CancellationToken stoppingToken)
     {
+        // TODO: Replace hardcoded fee range with values from NBXplorer fee estimation.
         using var transition = proposal.ApplyFeeRange(1, 10);
         using var provisional = transition.Save(persister);
         await ProcessProvisionalProposalAsync(provisional, persister, receiverScript, ohttpRelayUrl, storeId, invoiceId, receiverCoins, stoppingToken).ConfigureAwait(false);
@@ -780,6 +784,7 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         }
     }
 
+    // TODO: Load all wallet-owned scripts from the store's derivation scheme and check the incoming script against that full set. 
     private sealed class ReceiverScriptOwnedCallback : IsScriptOwned
     {
         private readonly byte[] _script;
@@ -792,6 +797,7 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         public bool Callback(byte[] script) => script.SequenceEqual(_script);
     }
 
+    // TODO: Implement a persistent store of seen outpoints and check against it here.
     private sealed class NoInputsSeenCallback : IsOutputKnown
     {
         public bool Callback(PlainOutPoint _outpoint) => false;

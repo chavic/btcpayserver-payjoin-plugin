@@ -75,6 +75,7 @@ public class UIPayJoinController : Controller
         _logger = logger;
     }
 
+    // TODO: Restrict access to this endpoint.
     [AllowAnonymous]
     [HttpGet("invoices/{invoiceId}/bip21")]
     public async Task<IActionResult> GetBip21(string invoiceId, string mode = "standard", CancellationToken cancellationToken = default)
@@ -146,6 +147,7 @@ public class UIPayJoinController : Controller
         }
     }
 
+    // TODO: Remove this test endpoint.
     [AllowAnonymous]
     [IgnoreAntiforgeryToken]
     [HttpPost("run-test-payment")]

@@ -8,6 +8,7 @@ using Payjoin;
 
 namespace BTCPayServer.Plugins.Payjoin.Services;
 
+// TODO: Persist receiver sessions to the database so that active payjoin negotiations survive server restarts.
 public sealed class PayjoinReceiverSessionStore
 {
     private readonly ConcurrentDictionary<string, PayjoinReceiverSessionState> _sessions = new();
