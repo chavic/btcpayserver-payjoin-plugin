@@ -18,6 +18,8 @@ public class PayjoinStoreSettingsViewModel
     [Required]
     public Uri? OhttpRelayUrl { get; set; } = PayjoinStoreSettings.DefaultOhttpRelayUrl;
 
+    public string? ColdWalletDerivationScheme { get; set; }
+
     [BindNever]
     [ValidateNever]
     public LayoutModel LayoutModel { get; set; } = default!;

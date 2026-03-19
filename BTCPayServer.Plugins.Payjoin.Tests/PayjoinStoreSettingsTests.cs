@@ -5,6 +5,8 @@ namespace BTCPayServer.Plugins.Payjoin.Tests;
 
 public class PayjoinStoreSettingsTests
 {
+    private const string TestXpub = "xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8";
+
     [Fact]
     public void NewSettingsHasExpectedDefaults()
     {
@@ -13,6 +15,7 @@ public class PayjoinStoreSettingsTests
         Assert.False(settings.EnabledByDefault);
         Assert.Equal(PayjoinStoreSettings.DefaultDirectoryUrl, settings.DirectoryUrl);
         Assert.Equal(PayjoinStoreSettings.DefaultOhttpRelayUrl, settings.OhttpRelayUrl);
+        Assert.Null(settings.ColdWalletDerivationScheme);
     }
 
     [Fact]
@@ -25,11 +28,13 @@ public class PayjoinStoreSettingsTests
         {
             EnabledByDefault = true,
             DirectoryUrl = directoryUrl,
-            OhttpRelayUrl = ohttpRelayUrl
+            OhttpRelayUrl = ohttpRelayUrl,
+            ColdWalletDerivationScheme = TestXpub
         };
 
         Assert.True(settings.EnabledByDefault);
         Assert.Equal(directoryUrl, settings.DirectoryUrl);
         Assert.Equal(ohttpRelayUrl, settings.OhttpRelayUrl);
+        Assert.Equal(TestXpub, settings.ColdWalletDerivationScheme);
     }
 }

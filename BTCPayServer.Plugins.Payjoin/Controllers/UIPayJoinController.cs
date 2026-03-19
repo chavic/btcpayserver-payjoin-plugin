@@ -448,7 +448,8 @@ public class UIPayJoinController : Controller
             }
         }
 
-        return RunTestPaymentSuccess($"Payjoin transaction broadcasted: {transaction.GetHash()}");
+        var txid = transaction.GetHash().ToString();
+        return RunTestPaymentSuccess($"Payjoin transaction broadcasted: {txid}", txid);
     }
 
     private OkObjectResult RunTestPaymentFailure(string message)
@@ -456,9 +457,9 @@ public class UIPayJoinController : Controller
         return Ok(RunTestPaymentResponse.Failure(message));
     }
 
-    private OkObjectResult RunTestPaymentSuccess(string message)
+    private OkObjectResult RunTestPaymentSuccess(string message, string transactionId)
     {
-        return Ok(RunTestPaymentResponse.Success(message));
+        return Ok(RunTestPaymentResponse.Success(message, transactionId));
     }
 
     private async Task<byte[]> SendRequestAsync(Request request, CancellationToken cancellationToken)

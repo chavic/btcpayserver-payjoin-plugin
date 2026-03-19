@@ -4,8 +4,10 @@ using BTCPayServer.Abstractions.Models;
 using BTCPayServer.Client;
 using BTCPayServer.Plugins.Payjoin.Models;
 using BTCPayServer.Plugins.Payjoin.Services;
+using BTCPayServer.Services.Wallets;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System;
 using System.Threading.Tasks;
 
 namespace BTCPayServer.Plugins.Payjoin.Controllers;
@@ -15,10 +17,17 @@ namespace BTCPayServer.Plugins.Payjoin.Controllers;
 public class UIStorePayjoinController : Controller
 {
     private readonly IPayjoinStoreSettingsRepository _settingsRepository;
+    private readonly BTCPayNetworkProvider _networkProvider;
+    private readonly BTCPayWalletProvider _walletProvider;
 
-    public UIStorePayjoinController(IPayjoinStoreSettingsRepository settingsRepository)
+    public UIStorePayjoinController(
+        IPayjoinStoreSettingsRepository settingsRepository,
+        BTCPayNetworkProvider networkProvider,
+        BTCPayWalletProvider walletProvider)
     {
         _settingsRepository = settingsRepository;
+        _networkProvider = networkProvider;
+        _walletProvider = walletProvider;
     }
 
     [HttpGet("")]
@@ -37,6 +46,7 @@ public class UIStorePayjoinController : Controller
             EnabledByDefault = settings.EnabledByDefault,
             DirectoryUrl = settings.DirectoryUrl,
             OhttpRelayUrl = settings.OhttpRelayUrl,
+            ColdWalletDerivationScheme = settings.ColdWalletDerivationScheme,
             LayoutModel = new LayoutModel("Payjoin", "Payjoin").SetCategory(WellKnownCategories.Store)
         };
         ViewData.SetLayoutModel(vm.LayoutModel);
@@ -65,11 +75,43 @@ public class UIStorePayjoinController : Controller
             return View("Settings", model);
         }
 
+        string? validatedDerivationScheme = null;
+        if (!string.IsNullOrWhiteSpace(model.ColdWalletDerivationScheme))
+        {
+            var network = _networkProvider.GetNetwork<BTCPayNetwork>("BTC");
+            if (network is null)
+            {
+                ModelState.AddModelError(nameof(model.ColdWalletDerivationScheme), "BTC network is not available.");
+                ViewData.SetLayoutModel(model.LayoutModel);
+                return View("Settings", model);
+            }
+
+            try
+            {
+                var parsed = DerivationSchemeHelper.Parse(model.ColdWalletDerivationScheme.Trim(), network);
+
+                var wallet = _walletProvider.GetWallet(network);
+                if (wallet is not null)
+                {
+                    await wallet.TrackAsync(parsed.AccountDerivation).ConfigureAwait(false);
+                }
+
+                validatedDerivationScheme = parsed.AccountDerivation.ToString();
+            }
+            catch (FormatException ex)
+            {
+                ModelState.AddModelError(nameof(model.ColdWalletDerivationScheme), $"Invalid wallet format: {ex.Message}");
+                ViewData.SetLayoutModel(model.LayoutModel);
+                return View("Settings", model);
+            }
+        }
+
         var settings = new PayjoinStoreSettings
         {
             EnabledByDefault = model.EnabledByDefault,
             DirectoryUrl = model.DirectoryUrl,
-            OhttpRelayUrl = model.OhttpRelayUrl
+            OhttpRelayUrl = model.OhttpRelayUrl,
+            ColdWalletDerivationScheme = validatedDerivationScheme
         };
 
         await _settingsRepository.SetAsync(storeId, settings).ConfigureAwait(false);

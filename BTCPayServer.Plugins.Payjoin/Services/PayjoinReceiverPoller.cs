@@ -58,6 +58,7 @@ public sealed class PayjoinReceiverPoller : BackgroundService
     private readonly PaymentMethodHandlerDictionary _handlers;
     private readonly BTCPayWalletProvider _walletProvider;
     private readonly ExplorerClientProvider _explorerClientProvider;
+    private readonly IPayjoinStoreSettingsRepository _storeSettingsRepository;
 
     public PayjoinReceiverPoller(
         PayjoinReceiverSessionStore sessionStore,
@@ -68,6 +69,7 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         PaymentMethodHandlerDictionary handlers,
         BTCPayWalletProvider walletProvider,
         ExplorerClientProvider explorerClientProvider,
+        IPayjoinStoreSettingsRepository storeSettingsRepository,
         ILogger<PayjoinReceiverPoller> logger)
     {
         _sessionStore = sessionStore;
@@ -78,6 +80,7 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         _handlers = handlers;
         _walletProvider = walletProvider;
         _explorerClientProvider = explorerClientProvider;
+        _storeSettingsRepository = storeSettingsRepository;
         _logger = logger;
     }
 
@@ -402,6 +405,25 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         byte[] receiverScript,
         CancellationToken cancellationToken)
     {
+        var network = _networkProvider.GetNetwork<BTCPayNetwork>("BTC");
+        if (network is null)
+        {
+            return null;
+        }
+
+        var client = _explorerClientProvider.GetExplorerClient(network);
+
+        var coldWalletDerivation = await TryParseColdWalletDerivationAsync(storeId, network).ConfigureAwait(false);
+        if (coldWalletDerivation is not null)
+        {
+            var coldChangeAddress = await client.GetUnusedAsync(coldWalletDerivation, DerivationFeature.Deposit, 0, false, cancellationToken).ConfigureAwait(false);
+            var coldChangeScript = coldChangeAddress?.ScriptPubKey?.ToBytes();
+            if (coldChangeScript is not null && coldChangeScript.Length > 0 && !coldChangeScript.SequenceEqual(receiverScript))
+            {
+                return coldChangeScript;
+            }
+        }
+
         var (_, coins) = await GetReceiverInputsAsync(storeId, invoiceId, cancellationToken).ConfigureAwait(false);
         var receiverChangeScript = coins
             .Select(c => c.ScriptPubKey.ToBytes())
@@ -409,12 +431,6 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         if (receiverChangeScript is not null)
         {
             return receiverChangeScript;
-        }
-
-        var network = _networkProvider.GetNetwork<BTCPayNetwork>("BTC");
-        if (network is null)
-        {
-            return null;
         }
 
         var store = await _storeRepository.FindStore(storeId).ConfigureAwait(false);
@@ -430,7 +446,6 @@ public sealed class PayjoinReceiverPoller : BackgroundService
             return null;
         }
 
-        var client = _explorerClientProvider.GetExplorerClient(network);
         var changeAddress = await client.GetUnusedAsync(derivationScheme.AccountDerivation, DerivationFeature.Change, 0, false, cancellationToken).ConfigureAwait(false);
         var generatedReceiverChangeScriptPubKey = changeAddress?.ScriptPubKey;
         if (generatedReceiverChangeScriptPubKey is null)
@@ -445,6 +460,24 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         }
 
         return generatedReceiverChangeScript;
+    }
+
+    private async Task<DerivationStrategyBase?> TryParseColdWalletDerivationAsync(string storeId, BTCPayNetwork network)
+    {
+        var storeSettings = await _storeSettingsRepository.GetAsync(storeId).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(storeSettings.ColdWalletDerivationScheme))
+        {
+            return null;
+        }
+
+        try
+        {
+            return DerivationSchemeHelper.Parse(storeSettings.ColdWalletDerivationScheme, network).AccountDerivation;
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
     }
 
     private async Task ProcessWantsInputsAsync(

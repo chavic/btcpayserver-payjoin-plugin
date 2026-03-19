@@ -34,6 +34,13 @@
                 <input asp-for="OhttpRelayUrl" class="form-control" id="PayjoinOhttpRelayUrl" />
                 <span asp-validation-for="OhttpRelayUrl" class="text-danger"></span>
             </div>
+
+            <div class="form-group">
+                <label asp-for="ColdWalletDerivationScheme" class="form-label" text-translate="true">Cold wallet</label>
+                <input asp-for="ColdWalletDerivationScheme" class="form-control" id="PayjoinColdWallet" placeholder="xpub... or output descriptor" />
+                <span asp-validation-for="ColdWalletDerivationScheme" class="text-danger"></span>
+                <div class="form-text" text-translate="true">Optional. Provide an extended public key or output descriptor for a cold storage wallet. Payjoin change outputs will be directed to this wallet, sweeping excess funds to cold storage.</div>
+            </div>
         </div>
     </div>
 </form>

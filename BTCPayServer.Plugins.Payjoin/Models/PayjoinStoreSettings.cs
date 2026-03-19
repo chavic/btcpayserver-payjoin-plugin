@@ -13,4 +13,6 @@ public class PayjoinStoreSettings
     public Uri? DirectoryUrl { get; set; } = DefaultDirectoryUrl;
 
     public Uri? OhttpRelayUrl { get; set; } = DefaultOhttpRelayUrl;
+
+    public string? ColdWalletDerivationScheme { get; set; }
 }
