@@ -70,6 +70,11 @@ public sealed class PayjoinBip21Service
             return bip21;
         }
 
+        if (due <= 0m)
+        {
+            return bip21;
+        }
+
         OhttpKeys? ohttpKeys = await _ohttpKeysProvider.GetKeysAsync(ohttpRelayUrl, directoryUrl, storeId, cancellationToken).ConfigureAwait(false);
 
         if (ohttpKeys is null)

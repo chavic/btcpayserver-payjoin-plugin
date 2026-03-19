@@ -1,5 +1,6 @@
 using BTCPayServer.Data;
 using BTCPayServer.Payments;
+using BTCPayServer.Client.Models;
 using BTCPayServer.Services.Invoices;
 using BTCPayServer.Services.Stores;
 using BTCPayServer.Services.Wallets;
@@ -106,6 +107,7 @@ public sealed class PayjoinReceiverPoller : BackgroundService
                 catch (InvalidOperationException ex)
                 {
                     LogPayjoinReceiverPollingFailedForInvoice(_logger, session.InvoiceId, ex);
+                    RemoveSession(session.InvoiceId, "receiver session failed with invalid operation");
                 }
                 catch (TaskCanceledException ex)
                 {
@@ -127,6 +129,11 @@ public sealed class PayjoinReceiverPoller : BackgroundService
 
     private async Task ProcessSessionAsync(PayjoinReceiverSessionState session, CancellationToken stoppingToken)
     {
+        if (!await IsInvoicePayjoinEligibleAsync(session).ConfigureAwait(false))
+        {
+            return;
+        }
+
         if (!TryGetReceiverScript(session, out var receiverScript))
         {
             LogPayjoinReceiverScriptUnavailable(_logger, session.InvoiceId, null);
@@ -198,6 +205,24 @@ public sealed class PayjoinReceiverPoller : BackgroundService
                 RemoveSession(session.InvoiceId, "receiver session closed");
                 break;
         }
+    }
+
+    private async Task<bool> IsInvoicePayjoinEligibleAsync(PayjoinReceiverSessionState session)
+    {
+        var invoice = await _invoiceRepository.GetInvoice(session.InvoiceId).ConfigureAwait(false);
+        if (invoice is null)
+        {
+            RemoveSession(session.InvoiceId, "invoice no longer exists");
+            return false;
+        }
+
+        if (invoice.GetInvoiceState().Status != InvoiceStatus.New)
+        {
+            RemoveSession(session.InvoiceId, $"invoice is no longer payable ({invoice.GetInvoiceState().Status})");
+            return false;
+        }
+
+        return true;
     }
 
     private bool TryExpireSession(PayjoinReceiverSessionState session)
@@ -382,7 +407,18 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         }
 
         var due = prompt.Calculate().Due;
-        return checked((ulong)Money.Coins(due).Satoshi);
+        if (due <= 0m)
+        {
+            return null;
+        }
+
+        var dueSats = Money.Coins(due).Satoshi;
+        if (dueSats <= 0)
+        {
+            return null;
+        }
+
+        return checked((ulong)dueSats);
     }
 
     private static (PlainTxOut[] ExactPaymentOutputs, byte[] ReceiverChangeScript) CreateExactPaymentReceiverOutputs(
