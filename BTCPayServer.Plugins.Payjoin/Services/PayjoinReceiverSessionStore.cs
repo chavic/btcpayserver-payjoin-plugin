@@ -1,3 +1,4 @@
+using BTCPayServer.Client.Models;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -57,6 +58,11 @@ public sealed class PayjoinReceiverSessionStore
         return _sessions.TryRemove(invoiceId, out _);
     }
 
+    public bool RequestClose(string invoiceId, InvoiceStatus invoiceStatus)
+    {
+        return _sessions.TryGetValue(invoiceId, out var session) && session.RequestClose(invoiceStatus);
+    }
+
     internal static JsonReceiverSessionPersister CreatePersister(PayjoinReceiverSessionState session)
     {
         return new InMemoryReceiverPersister(session);
@@ -113,6 +119,8 @@ public sealed class PayjoinReceiverSessionState
     public DateTimeOffset MonitoringExpiresAt { get; }
     public DateTimeOffset CreatedAt { get; }
     public DateTimeOffset UpdatedAt { get; private set; }
+    public bool IsCloseRequested { get; private set; }
+    public InvoiceStatus? CloseInvoiceStatus { get; private set; }
 
     internal void AddEvent(string @event)
     {
@@ -123,6 +131,19 @@ public sealed class PayjoinReceiverSessionState
     internal string[] GetEvents()
     {
         return _events.ToArray();
+    }
+
+    internal bool RequestClose(InvoiceStatus invoiceStatus)
+    {
+        var changed = !IsCloseRequested || CloseInvoiceStatus != invoiceStatus;
+        IsCloseRequested = true;
+        CloseInvoiceStatus = invoiceStatus;
+        if (changed)
+        {
+            Touch();
+        }
+
+        return changed;
     }
 
     internal void Touch()

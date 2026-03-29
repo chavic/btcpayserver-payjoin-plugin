@@ -1,11 +1,12 @@
 @using BTCPayServer
 @using BTCPayServer.Abstractions.Extensions
 @using BTCPayServer.Client.Models
+@using BTCPayServer.Plugins.Payjoin.Models
 @using BTCPayServer.Plugins.Payjoin.Services
 @using BTCPayServer.Services.Invoices
 @using Microsoft.AspNetCore.Routing
 @inject BTCPayServer.Services.Invoices.InvoiceRepository InvoiceRepository
-@inject IPayjoinStoreSettingsRepository StoreSettingsRepository
+@inject PayjoinInvoicePaymentUrlService InvoicePaymentUrlService
 @inject BTCPayServer.Services.BTCPayServerEnvironment Env
 
 @{
@@ -33,23 +34,14 @@
         return;
     }
 
-    var storeSettings = await StoreSettingsRepository.GetAsync(invoice.StoreId);
-    if (storeSettings is null)
+    GetBip21Response? bip21Response = await InvoicePaymentUrlService.GetInvoicePaymentUrlAsync(invoiceId);
+    if (bip21Response is null || !bip21Response.PayjoinEnabled)
     {
         return;
     }
-
-    var payjoinEnabled = storeSettings.EnabledByDefault;
-
-    if (!payjoinEnabled || storeSettings.DirectoryUrl is null || storeSettings.OhttpRelayUrl is null)
-    {
-        return;
-    }
-
-    var endpoint = Url.Content($"~/plugins/payjoin/invoices/{Uri.EscapeDataString(invoiceId)}/bip21");
 }
 
-<div id="payjoin-toggle" data-endpoint="@endpoint" data-invoice-id="@invoiceId" style="display:none;"></div>
+<div id="payjoin-toggle" data-payment-url="@bip21Response.Bip21" data-invoice-id="@invoiceId" style="display:none;"></div>
 
 @if (Env.CheatMode)
 {
@@ -140,67 +132,53 @@
         btn.disabled = false;
     }
 
-    async function applyPayjoinMode() {
+    function applyPayjoinMode() {
         const root = document.getElementById('payjoin-toggle');
-        if (!root?.dataset.endpoint) {
+        const bip21 = root?.dataset.paymentUrl;
+        if (!bip21) {
             return;
         }
 
-        try {
-            const resp = await fetch(root.dataset.endpoint, { credentials: 'same-origin' });
-            if (!resp.ok) {
-                console.warn('Payjoin mode fetch failed:', resp.status);
-                return;
-            }
-            const data = await resp.json();
-            if (!data?.bip21 || !data?.payjoinEnabled) {
-                return;
-            }
+        currentPaymentUrl = bip21;
+        root.dataset.paymentUrl = bip21;
 
-            const bip21 = data.bip21;
-            currentPaymentUrl = bip21;
-            root.dataset.paymentUrl = bip21;
-
-            function patchVue(attempts) {
-                const app = document.getElementById('Checkout')?.__vue__;
-                if (app?.srvModel) {
-                    const fake = document.getElementById('test-payment');
-                    const wf = document.getElementById('payjoin-test-workflow');
-                    if (fake) {
-                        fake.style.display = 'none';
-                        if (wf?.parentElement) {
-                            fake.parentElement.insertBefore(wf, fake.nextSibling);
-                            wf.style.display = '';
-                        }
+        function patchVue(attempts) {
+            const app = document.getElementById('Checkout')?.__vue__;
+            if (app?.srvModel) {
+                const fake = document.getElementById('test-payment');
+                const wf = document.getElementById('payjoin-test-workflow');
+                if (fake) {
+                    fake.style.display = 'none';
+                    if (wf?.parentElement) {
+                        fake.parentElement.insertBefore(wf, fake.nextSibling);
+                        wf.style.display = '';
                     }
-
-                    if (!app._payjoinPatched) {
-                        app._payjoinPatched = true;
-                        const orig = app.updateData.bind(app);
-                        app.updateData = d => {
-                            if (d && isPayjoinPaymentMethod(d.paymentMethodId)) {
-                                d.invoiceBitcoinUrl = d.invoiceBitcoinUrlQR = bip21;
-                            }
-                            orig(d);
-                            setPayjoinIndicator(isPayjoinPaymentMethod(
-                                d?.paymentMethodId ?? app.srvModel?.paymentMethodId));
-                        };
-                    }
-
-                    if (isPayjoinPaymentMethod(app.srvModel.paymentMethodId)) {
-                        app.$set(app.srvModel, 'invoiceBitcoinUrl', bip21);
-                        app.$set(app.srvModel, 'invoiceBitcoinUrlQR', bip21);
-                    }
-                    setPayjoinIndicator(isPayjoinPaymentMethod(app.srvModel.paymentMethodId));
-                } else if (attempts > 0) {
-                    setTimeout(() => patchVue(attempts - 1), VUE_PATCH_RETRY_DELAY_MS);
                 }
-            }
 
-            patchVue(VUE_PATCH_MAX_ATTEMPTS);
-        } catch (err) {
-            console.error('Payjoin mode failed', err);
+                if (!app._payjoinPatched) {
+                    app._payjoinPatched = true;
+                    const orig = app.updateData.bind(app);
+                    app.updateData = d => {
+                        if (d && isPayjoinPaymentMethod(d.paymentMethodId)) {
+                            d.invoiceBitcoinUrl = d.invoiceBitcoinUrlQR = bip21;
+                        }
+                        orig(d);
+                        setPayjoinIndicator(isPayjoinPaymentMethod(
+                            d?.paymentMethodId ?? app.srvModel?.paymentMethodId));
+                    };
+                }
+
+                if (isPayjoinPaymentMethod(app.srvModel.paymentMethodId)) {
+                    app.$set(app.srvModel, 'invoiceBitcoinUrl', bip21);
+                    app.$set(app.srvModel, 'invoiceBitcoinUrlQR', bip21);
+                }
+                setPayjoinIndicator(isPayjoinPaymentMethod(app.srvModel.paymentMethodId));
+            } else if (attempts > 0) {
+                setTimeout(() => patchVue(attempts - 1), VUE_PATCH_RETRY_DELAY_MS);
+            }
         }
+
+        patchVue(VUE_PATCH_MAX_ATTEMPTS);
     }
 
     document.addEventListener('click', e => {

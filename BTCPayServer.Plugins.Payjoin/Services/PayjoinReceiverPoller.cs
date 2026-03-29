@@ -57,7 +57,7 @@ public sealed class PayjoinReceiverPoller : BackgroundService
     private readonly StoreRepository _storeRepository;
     private readonly InvoiceRepository _invoiceRepository;
     private readonly PaymentMethodHandlerDictionary _handlers;
-    private readonly BTCPayWalletProvider _walletProvider;
+    private readonly PayjoinAvailabilityService _availabilityService;
     private readonly ExplorerClientProvider _explorerClientProvider;
     private readonly IPayjoinStoreSettingsRepository _storeSettingsRepository;
 
@@ -68,7 +68,7 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         StoreRepository storeRepository,
         InvoiceRepository invoiceRepository,
         PaymentMethodHandlerDictionary handlers,
-        BTCPayWalletProvider walletProvider,
+        PayjoinAvailabilityService availabilityService,
         ExplorerClientProvider explorerClientProvider,
         IPayjoinStoreSettingsRepository storeSettingsRepository,
         ILogger<PayjoinReceiverPoller> logger)
@@ -79,7 +79,7 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         _storeRepository = storeRepository;
         _invoiceRepository = invoiceRepository;
         _handlers = handlers;
-        _walletProvider = walletProvider;
+        _availabilityService = availabilityService;
         _explorerClientProvider = explorerClientProvider;
         _storeSettingsRepository = storeSettingsRepository;
         _logger = logger;
@@ -130,7 +130,7 @@ public sealed class PayjoinReceiverPoller : BackgroundService
 
     private async Task ProcessSessionAsync(PayjoinReceiverSessionState session, CancellationToken stoppingToken)
     {
-        if (!await IsInvoicePayjoinEligibleAsync(session).ConfigureAwait(false))
+        if (!await RefreshInvoiceCloseStateAsync(session).ConfigureAwait(false))
         {
             return;
         }
@@ -168,10 +168,20 @@ public sealed class PayjoinReceiverPoller : BackgroundService
             return;
         }
 
+        if (session.IsCloseRequested)
+        {
+            // TODO: Send a persisted replyable receiver rejection here after the payjoin library supports closing an in-flight session cleanly.
+            RemoveSession(session.InvoiceId, $"invoice is no longer payable ({session.CloseInvoiceStatus})");
+            return;
+        }
+
         switch (state)
         {
             case ReceiveSession.Initialized initialized:
                 await PollInitializedAsync(initialized.inner, persister, receiverScript, session.OhttpRelayUrl, session.StoreId, session.InvoiceId, stoppingToken).ConfigureAwait(false);
+                break;
+            case ReceiveSession.HasReplyableError hasReplyableError:
+                await ProcessReplyableErrorAsync(hasReplyableError.inner, persister, session.OhttpRelayUrl, stoppingToken).ConfigureAwait(false);
                 break;
             case ReceiveSession.UncheckedOriginalPayload payload:
                 await ProcessUncheckedProposalAsync(payload.inner, persister, receiverScript, session.OhttpRelayUrl, session.StoreId, session.InvoiceId, stoppingToken).ConfigureAwait(false);
@@ -210,7 +220,7 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         }
     }
 
-    private async Task<bool> IsInvoicePayjoinEligibleAsync(PayjoinReceiverSessionState session)
+    private async Task<bool> RefreshInvoiceCloseStateAsync(PayjoinReceiverSessionState session)
     {
         var invoice = await _invoiceRepository.GetInvoice(session.InvoiceId).ConfigureAwait(false);
         if (invoice is null)
@@ -221,8 +231,7 @@ public sealed class PayjoinReceiverPoller : BackgroundService
 
         if (invoice.GetInvoiceState().Status != InvoiceStatus.New)
         {
-            RemoveSession(session.InvoiceId, $"invoice is no longer payable ({invoice.GetInvoiceState().Status})");
-            return false;
+            session.RequestClose(invoice.GetInvoiceState().Status);
         }
 
         return true;
@@ -299,6 +308,18 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         using var transition = proposal.AssumeInteractiveReceiver();
         using var maybeInputsOwned = transition.Save(persister);
         await ProcessMaybeInputsOwnedAsync(maybeInputsOwned, persister, receiverScript, ohttpRelayUrl, storeId, invoiceId, stoppingToken).ConfigureAwait(false);
+    }
+
+    private async Task ProcessReplyableErrorAsync(
+        HasReplyableError replyableError,
+        JsonReceiverSessionPersister persister,
+        SystemUri ohttpRelayUrl,
+        CancellationToken stoppingToken)
+    {
+        using var requestResponse = replyableError.CreateErrorRequest(ohttpRelayUrl.ToString());
+        var responseBody = await SendRelayRequestAsync(requestResponse.request, stoppingToken).ConfigureAwait(false);
+        using var transition = replyableError.ProcessErrorResponse(responseBody, requestResponse.clientResponse);
+        transition.Save(persister);
     }
 
     private async Task ProcessMaybeInputsOwnedAsync(
@@ -578,34 +599,13 @@ public sealed class PayjoinReceiverPoller : BackgroundService
             return (Array.Empty<InputPair>(), Array.Empty<ReceivedCoin>());
         }
 
-        var store = await _storeRepository.FindStore(storeId).ConfigureAwait(false);
-        if (store is null)
+        var confirmed = await _availabilityService.GetConfirmedReceiverCoinsAsync(storeId, "BTC", network, cancellationToken).ConfigureAwait(false);
+        if (confirmed.Length == 0)
         {
             return (Array.Empty<InputPair>(), Array.Empty<ReceivedCoin>());
         }
 
-        var paymentMethodId = PaymentTypes.CHAIN.GetPaymentMethodId("BTC");
-        var derivationScheme = store.GetPaymentMethodConfig<DerivationSchemeSettings>(paymentMethodId, _handlers, true);
-        if (derivationScheme is null)
-        {
-            return (Array.Empty<InputPair>(), Array.Empty<ReceivedCoin>());
-        }
-
-        var wallet = _walletProvider.GetWallet(network);
-        if (wallet is null)
-        {
-            return (Array.Empty<InputPair>(), Array.Empty<ReceivedCoin>());
-        }
-
-        var confirmed = await wallet.GetUnspentCoins(derivationScheme.AccountDerivation, true, cancellationToken).ConfigureAwait(false);
-        var all = await wallet.GetUnspentCoins(derivationScheme.AccountDerivation, false, cancellationToken).ConfigureAwait(false);
-        var sourceCoins = confirmed.Length > 0 ? confirmed : all;
-        if (sourceCoins.Length == 0)
-        {
-            return (Array.Empty<InputPair>(), Array.Empty<ReceivedCoin>());
-        }
-
-        var inputs = sourceCoins
+        var inputs = confirmed
             .Select(c =>
             {
                 var txin = new PlainTxIn(
@@ -619,7 +619,7 @@ public sealed class PayjoinReceiverPoller : BackgroundService
             })
             .ToArray();
 
-        return (inputs, sourceCoins);
+        return (inputs, confirmed);
     }
 
     private async Task ProcessWantsFeeRangeAsync(
@@ -743,8 +743,14 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         CancellationToken stoppingToken)
     {
         using var requestResponse = proposal.CreatePostRequest(ohttpRelayUrl.ToString());
-        var request = requestResponse.request;
+        var responseBody = await SendRelayRequestAsync(requestResponse.request, stoppingToken).ConfigureAwait(false);
 
+        using var transition = proposal.ProcessResponse(responseBody, requestResponse.clientResponse);
+        using var _ = transition.Save(persister);
+    }
+
+    private async Task<byte[]> SendRelayRequestAsync(Request request, CancellationToken stoppingToken)
+    {
         using var message = new HttpRequestMessage(HttpMethod.Post, request.url)
         {
             Content = new ByteArrayContent(request.body)
@@ -753,10 +759,7 @@ public sealed class PayjoinReceiverPoller : BackgroundService
 
         var client = _httpClientFactory.CreateClient(nameof(PayjoinReceiverPoller));
         using var response = await client.SendAsync(message, stoppingToken).ConfigureAwait(false);
-        var responseBody = await response.Content.ReadAsByteArrayAsync(stoppingToken).ConfigureAwait(false);
-
-        using var transition = proposal.ProcessResponse(responseBody, requestResponse.clientResponse);
-        using var _ = transition.Save(persister);
+        return await response.Content.ReadAsByteArrayAsync(stoppingToken).ConfigureAwait(false);
     }
 
     private bool TryGetReceiverScript(PayjoinReceiverSessionState session, out byte[] script)

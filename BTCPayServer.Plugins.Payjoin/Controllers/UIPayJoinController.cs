@@ -39,10 +39,8 @@ public class UIPayJoinController : Controller
     private readonly StoreRepository _storeRepository;
     private readonly PaymentMethodHandlerDictionary _handlers;
     private readonly BTCPayNetworkProvider _networkProvider;
-    private readonly PayjoinReceiverSessionStore _receiverSessionStore;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IPayjoinStoreSettingsRepository _storeSettingsRepository;
-    private readonly PayjoinBip21Service _bip21Service;
     private readonly ExplorerClientProvider _explorerClientProvider;
     private readonly BTCPayWalletProvider _walletProvider;
     private readonly ILogger<UIPayJoinController>? _logger;
@@ -53,10 +51,8 @@ public class UIPayJoinController : Controller
         StoreRepository storeRepository,
         PaymentMethodHandlerDictionary handlers,
         BTCPayNetworkProvider networkProvider,
-        PayjoinReceiverSessionStore receiverSessionStore,
         IHttpClientFactory httpClientFactory,
         IPayjoinStoreSettingsRepository storeSettingsRepository,
-        PayjoinBip21Service bip21Service,
         ExplorerClientProvider explorerClientProvider,
         BTCPayWalletProvider walletProvider,
         ILogger<UIPayJoinController>? logger = null)
@@ -66,85 +62,11 @@ public class UIPayJoinController : Controller
         _storeRepository = storeRepository;
         _handlers = handlers;
         _networkProvider = networkProvider;
-        _receiverSessionStore = receiverSessionStore;
         _httpClientFactory = httpClientFactory;
         _storeSettingsRepository = storeSettingsRepository;
-        _bip21Service = bip21Service;
         _explorerClientProvider = explorerClientProvider;
         _walletProvider = walletProvider;
         _logger = logger;
-    }
-
-    // TODO: Restrict access to this endpoint.
-    [AllowAnonymous]
-    [HttpGet("invoices/{invoiceId}/bip21")]
-    public async Task<IActionResult> GetBip21(string invoiceId, string mode = "standard", CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(invoiceId))
-        {
-            return BadRequest(new { error = "invoiceId is required" });
-        }
-
-        var invoice = await _invoiceRepository.GetInvoice(invoiceId).ConfigureAwait(false);
-        if (invoice is null)
-        {
-            return NotFound();
-        }
-
-        var cryptoCode = "BTC";
-        var paymentMethodId = PaymentTypes.CHAIN.GetPaymentMethodId(cryptoCode);
-        var prompt = invoice.GetPaymentPrompt(paymentMethodId);
-        if (prompt?.Destination is null)
-        {
-            return BadRequest(new { error = "BTC payment prompt not available" });
-        }
-
-        var network = _networkProvider.GetNetwork<BTCPayNetwork>(cryptoCode);
-        if (network is null)
-        {
-            return BadRequest(new { error = "BTC network not available" });
-        }
-
-        var storeSettings = await _storeSettingsRepository.GetAsync(invoice.StoreId).ConfigureAwait(false);
-
-        var enablePayjoin = storeSettings?.EnabledByDefault ?? false;
-
-        var calculation = prompt.Calculate();
-        var bip21 = await _bip21Service.BuildAsync(
-            cryptoCode,
-            prompt.Destination,
-            calculation.Due,
-            storeSettings,
-            enablePayjoin,
-            invoice.Id,
-            invoice.StoreId,
-            invoice.MonitoringExpiration,
-            cancellationToken).ConfigureAwait(false);
-
-        var actualPayjoinEnabled = IsPayjoinEnabled(bip21);
-        return Ok(new GetBip21Response
-        {
-            Bip21 = bip21,
-            PayjoinEnabled = actualPayjoinEnabled
-        });
-    }
-
-    private static bool IsPayjoinEnabled(string paymentUrl)
-    {
-        try
-        {
-            using var parsedUri = PayjoinUri.Parse(paymentUrl);
-            using var _ = parsedUri.CheckPjSupported();
-            return true;
-        }
-        catch (PjParseException)
-        {
-            return false;
-        }
-        catch (PjNotSupported)
-        {
-            return false;
-        }
     }
 
     // TODO: Remove this test endpoint.
@@ -310,16 +232,7 @@ public class UIPayJoinController : Controller
                         using var pollRequest = current.CreatePollRequest(storeSettings.OhttpRelayUrl.ToString());
                         var pollResponse = await SendRequestAsync(pollRequest.request, cancellationToken).ConfigureAwait(false);
                         using var pollTransition = current.ProcessResponse(pollResponse, pollRequest.ohttpCtx);
-                        PollingForProposalTransitionOutcome? outcome;
-                        try
-                        {
-                            outcome = pollTransition.Save(senderPersister);
-                        }
-                        catch (SenderPersistedException.ResponseException)
-                        {
-                            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken).ConfigureAwait(false);
-                            continue;
-                        }
+                        var outcome = pollTransition.Save(senderPersister);
 
                         try
                         {
@@ -357,6 +270,10 @@ public class UIPayJoinController : Controller
             {
                 return RunTestPaymentFailure($"Sender build failed: {ex.Message}");
             }
+            catch (SenderPersistedException.ResponseException ex)
+            {
+                return RunTestPaymentFailure($"Sender rejected by receiver: {FormatSenderResponseException(ex.v1)}");
+            }
             catch (InvalidOperationException ex)
             {
                 return RunTestPaymentFailure($"Sender failed: {ex.Message}");
@@ -368,10 +285,6 @@ public class UIPayJoinController : Controller
             catch (TaskCanceledException ex)
             {
                 return RunTestPaymentFailure($"Sender failed: {ex.Message}");
-            }
-            catch (SenderPersistedException.ResponseException ex)
-            {
-                return RunTestPaymentFailure($"Sender response invalid: {ex.Message}");
             }
             catch (SenderPersistedException ex)
             {
@@ -452,6 +365,17 @@ public class UIPayJoinController : Controller
 
         var txid = transaction.GetHash().ToString();
         return RunTestPaymentSuccess($"Payjoin transaction broadcasted: {txid}", txid);
+    }
+
+    private static string FormatSenderResponseException(global::Payjoin.ResponseException responseException)
+    {
+        return responseException switch
+        {
+            global::Payjoin.ResponseException.WellKnown wellKnown => wellKnown.v1.ToString() ?? nameof(global::Payjoin.ResponseException.WellKnown),
+            global::Payjoin.ResponseException.Validation validation => validation.v1.ToString() ?? nameof(global::Payjoin.ResponseException.Validation),
+            global::Payjoin.ResponseException.Unrecognized unrecognized => $"{unrecognized.errorCode}: {unrecognized.msg}",
+            _ => responseException.ToString() ?? responseException.GetType().Name
+        };
     }
 
     private OkObjectResult RunTestPaymentFailure(string message)
