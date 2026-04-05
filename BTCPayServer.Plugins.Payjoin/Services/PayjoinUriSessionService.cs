@@ -114,7 +114,7 @@ public sealed class PayjoinUriSessionService
                 ohttpRelayUrl,
                 monitoringExpiresAt,
                 out var created);
-            var persister = PayjoinReceiverSessionStore.CreatePersister(session);
+            var persister = _receiverSessionStore.CreatePersister(session);
 
             if (created)
             {

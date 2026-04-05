@@ -1,5 +1,6 @@
 using BTCPayServer.Plugins.Payjoin.Services;
 using NBitcoin;
+using System;
 using Xunit;
 
 namespace BTCPayServer.Plugins.Payjoin.Tests;
@@ -7,102 +8,73 @@ namespace BTCPayServer.Plugins.Payjoin.Tests;
 public class PayjoinReceiverSessionStateTests
 {
     [Fact]
-    public void ContributedInputsAreEmptyByDefault()
+    public void ContributedInputIsMissingByDefault()
     {
         var session = CreateSession();
 
-        Assert.Empty(session.GetContributedInputs());
+        Assert.False(session.TryGetContributedInput(out _));
     }
 
     [Fact]
-    public void ContributedInputsRoundTripWithDefensiveCopies()
+    public void ContributedInputRoundTripsThroughPersistedMetadata()
     {
         var session = CreateSession();
-        var contributedInput = new PayjoinReceiverContributedInput(
-            new OutPoint(uint256.Parse("1111111111111111111111111111111111111111111111111111111111111111"), 1),
-            new KeyPath("0/1"));
+        var updatedAt = DateTimeOffset.UtcNow.AddMinutes(1);
+        var contributedOutPoint = new OutPoint(uint256.Parse("1111111111111111111111111111111111111111111111111111111111111111"), 1);
 
-        session.SetContributedInputs(contributedInput);
+        session.SetContributedInput(contributedOutPoint, updatedAt);
 
-        var firstRead = session.GetContributedInputs();
-        Assert.Single(firstRead);
-        Assert.Equal(contributedInput.OutPoint, firstRead[0].OutPoint);
-        Assert.Equal(contributedInput.KeyPath, firstRead[0].KeyPath);
+        Assert.True(session.TryGetContributedInput(out var restoredOutPoint));
+        Assert.Equal(contributedOutPoint, restoredOutPoint);
+        Assert.Equal(updatedAt, session.UpdatedAt);
 
-        firstRead[0] = new PayjoinReceiverContributedInput(
-            new OutPoint(uint256.Parse("2222222222222222222222222222222222222222222222222222222222222222"), 2),
-            new KeyPath("1/2"));
-
-        var secondRead = session.GetContributedInputs();
-        Assert.Single(secondRead);
-        Assert.Equal(contributedInput.OutPoint, secondRead[0].OutPoint);
-        Assert.Equal(contributedInput.KeyPath, secondRead[0].KeyPath);
+        var snapshot = session.Snapshot();
+        Assert.Equal(contributedOutPoint.Hash.ToString(), snapshot.ContributedInputTransactionId);
+        Assert.Equal((int)contributedOutPoint.N, snapshot.ContributedInputOutputIndex);
     }
 
     [Fact]
-    public void SetContributedInputsCopiesInputArray()
+    public void SettingTheSameContributedInputDoesNotAdvanceUpdatedAt()
     {
-        var session = CreateSession();
-        var originalInput = new PayjoinReceiverContributedInput(
-            new OutPoint(uint256.Parse("4444444444444444444444444444444444444444444444444444444444444444"), 4),
-            new KeyPath("3/4"));
-        var replacementInput = new PayjoinReceiverContributedInput(
-            new OutPoint(uint256.Parse("5555555555555555555555555555555555555555555555555555555555555555"), 5),
-            new KeyPath("4/5"));
-        var contributedInputs = new[] { originalInput };
+        var initialUpdatedAt = DateTimeOffset.UtcNow;
+        var session = CreateSession(updatedAt: initialUpdatedAt);
+        var contributedOutPoint = new OutPoint(uint256.Parse("2222222222222222222222222222222222222222222222222222222222222222"), 2);
+        var firstPersistedAt = initialUpdatedAt.AddMinutes(1);
 
-        session.SetContributedInputs(contributedInputs);
-        contributedInputs[0] = replacementInput;
+        session.SetContributedInput(contributedOutPoint, firstPersistedAt);
+        session.SetContributedInput(contributedOutPoint, initialUpdatedAt.AddMinutes(2));
 
-        var storedInputs = session.GetContributedInputs();
-        Assert.Single(storedInputs);
-        Assert.Equal(originalInput.OutPoint, storedInputs[0].OutPoint);
-        Assert.Equal(originalInput.KeyPath, storedInputs[0].KeyPath);
+        Assert.Equal(firstPersistedAt, session.UpdatedAt);
     }
 
     [Fact]
-    public void MultipleContributedInputsRoundTripInOrder()
+    public void InvalidPersistedContributedInputMetadataIsIgnored()
     {
-        var session = CreateSession();
-        var firstInput = new PayjoinReceiverContributedInput(
-            new OutPoint(uint256.Parse("6666666666666666666666666666666666666666666666666666666666666666"), 6),
-            new KeyPath("5/6"));
-        var secondInput = new PayjoinReceiverContributedInput(
-            new OutPoint(uint256.Parse("7777777777777777777777777777777777777777777777777777777777777777"), 7),
-            new KeyPath("6/7"));
+        var now = DateTimeOffset.UtcNow;
+        var session = new PayjoinReceiverSessionState(
+            "invoice-1",
+            "store-1",
+            "bcrt1qexampleaddress0000000000000000000000000",
+            new Uri("https://relay.example/"),
+            now.AddMinutes(5),
+            now,
+            now,
+            contributedInputTransactionId: "not-a-txid",
+            contributedInputOutputIndex: 1);
 
-        session.SetContributedInputs(firstInput, secondInput);
-
-        var storedInputs = session.GetContributedInputs();
-        Assert.Equal(2, storedInputs.Length);
-        Assert.Equal(firstInput.OutPoint, storedInputs[0].OutPoint);
-        Assert.Equal(firstInput.KeyPath, storedInputs[0].KeyPath);
-        Assert.Equal(secondInput.OutPoint, storedInputs[1].OutPoint);
-        Assert.Equal(secondInput.KeyPath, storedInputs[1].KeyPath);
+        Assert.False(session.TryGetContributedInput(out _));
     }
 
-    [Fact]
-    public void ClearContributedInputsRemovesStoredMetadata()
+    private static PayjoinReceiverSessionState CreateSession(DateTimeOffset? updatedAt = null)
     {
-        var session = CreateSession();
-        session.SetContributedInputs(new PayjoinReceiverContributedInput(
-            new OutPoint(uint256.Parse("3333333333333333333333333333333333333333333333333333333333333333"), 3),
-            new KeyPath("2/3")));
-
-        session.ClearContributedInputs();
-
-        Assert.Empty(session.GetContributedInputs());
-    }
-
-    private static PayjoinReceiverSessionState CreateSession()
-    {
+        var now = DateTimeOffset.UtcNow;
         return new PayjoinReceiverSessionState(
             "invoice-1",
             "store-1",
             "bcrt1qexampleaddress0000000000000000000000000",
             new Uri("https://relay.example/"),
-            DateTimeOffset.UtcNow.AddMinutes(5),
-            DateTimeOffset.UtcNow,
-            DateTimeOffset.UtcNow);
+            now.AddMinutes(5),
+            now,
+            updatedAt ?? now);
     }
 }

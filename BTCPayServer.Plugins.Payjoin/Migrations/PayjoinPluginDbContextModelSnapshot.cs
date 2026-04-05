@@ -18,10 +18,81 @@ namespace BTCPayServer.Plugins.Payjoin.Migrations
 #pragma warning disable 612, 618
             modelBuilder
                 .HasDefaultSchema("BTCPayServer.Plugins.Payjoin")
-                .HasAnnotation("ProductVersion", "6.0.9")
+                .HasAnnotation("ProductVersion", "8.0.0")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+
+            modelBuilder.Entity("BTCPayServer.Plugins.Payjoin.Data.PayjoinReceiverSessionData", b =>
+                {
+                    b.Property<string>("InvoiceId")
+                        .HasColumnType("text");
+
+                    b.Property<int?>("CloseInvoiceStatus")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("CloseRequestedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("ContributedInputOutputIndex")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ContributedInputTransactionId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsCloseRequested")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset>("MonitoringExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("OhttpRelayUrl")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ReceiverAddress")
+                        .HasColumnType("text");
+
+                    b.Property<string>("StoreId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("InvoiceId");
+
+                    b.ToTable("ReceiverSessions", "BTCPayServer.Plugins.Payjoin");
+                });
+
+            modelBuilder.Entity("BTCPayServer.Plugins.Payjoin.Data.PayjoinReceiverSessionEventData", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Event")
+                        .HasColumnType("text");
+
+                    b.Property<string>("InvoiceId")
+                        .HasColumnType("text");
+
+                    b.Property<int>("Sequence")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InvoiceId", "Sequence")
+                        .IsUnique();
+
+                    b.ToTable("ReceiverSessionEvents", "BTCPayServer.Plugins.Payjoin");
+                });
 
             modelBuilder.Entity("BTCPayServer.Plugins.Payjoin.Data.PluginData", b =>
                 {
@@ -35,6 +106,22 @@ namespace BTCPayServer.Plugins.Payjoin.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("PluginRecords", "BTCPayServer.Plugins.Payjoin");
+                });
+
+            modelBuilder.Entity("BTCPayServer.Plugins.Payjoin.Data.PayjoinReceiverSessionEventData", b =>
+                {
+                    b.HasOne("BTCPayServer.Plugins.Payjoin.Data.PayjoinReceiverSessionData", "Session")
+                        .WithMany("Events")
+                        .HasForeignKey("InvoiceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Session");
+                });
+
+            modelBuilder.Entity("BTCPayServer.Plugins.Payjoin.Data.PayjoinReceiverSessionData", b =>
+                {
+                    b.Navigation("Events");
                 });
 #pragma warning restore 612, 618
         }
