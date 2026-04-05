@@ -65,7 +65,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         await Task.Delay(delay, cts.Token).ConfigureAwait(true);
 
         var session = PayjoinIntegrationTestSupport.GetRequiredReceiverSession(tester, invoiceId);
-        Assert.NotEmpty(session.GetContributedInputs());
+        Assert.True(session.TryGetContributedInput(out _));
 
         var transactionId = await paymentTask.ConfigureAwait(true);
         Assert.False(string.IsNullOrWhiteSpace(transactionId));
