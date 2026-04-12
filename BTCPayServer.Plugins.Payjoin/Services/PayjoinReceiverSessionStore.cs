@@ -136,6 +136,7 @@ public sealed class PayjoinReceiverSessionStore
 
     public bool TryPersistContributedInput(string invoiceId, OutPoint outPoint)
     {
+        ArgumentNullException.ThrowIfNull(outPoint);
         lock (_sync)
         {
             EnsureLoadedCore();
@@ -155,7 +156,7 @@ public sealed class PayjoinReceiverSessionStore
         }
     }
 
-    public JsonReceiverSessionPersister CreatePersister(PayjoinReceiverSessionState session)
+    internal JsonReceiverSessionPersister CreatePersister(PayjoinReceiverSessionState session)
     {
         ArgumentNullException.ThrowIfNull(session);
         return new DatabaseBackedReceiverPersister(this, session);

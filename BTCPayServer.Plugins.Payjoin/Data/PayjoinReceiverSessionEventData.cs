@@ -2,7 +2,7 @@ using System;
 
 namespace BTCPayServer.Plugins.Payjoin.Data;
 
-public class PayjoinReceiverSessionEventData
+internal class PayjoinReceiverSessionEventData
 {
     public long Id { get; set; }
 

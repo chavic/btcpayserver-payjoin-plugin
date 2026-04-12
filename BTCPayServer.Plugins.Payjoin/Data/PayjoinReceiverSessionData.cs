@@ -4,7 +4,7 @@ using System.Collections.Generic;
 
 namespace BTCPayServer.Plugins.Payjoin.Data;
 
-public class PayjoinReceiverSessionData
+internal class PayjoinReceiverSessionData
 {
     public string InvoiceId { get; set; } = null!;
 
@@ -30,5 +30,5 @@ public class PayjoinReceiverSessionData
 
     public int? ContributedInputOutputIndex { get; set; }
 
-    public ICollection<PayjoinReceiverSessionEventData> Events { get; set; } = [];
+    public ICollection<PayjoinReceiverSessionEventData> Events { get; } = [];
 }

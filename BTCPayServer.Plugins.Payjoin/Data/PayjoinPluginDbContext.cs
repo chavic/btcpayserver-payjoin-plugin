@@ -15,12 +15,13 @@ public class PayjoinPluginDbContext : DbContext
 
     public DbSet<PluginData> PluginRecords { get; set; } = null!;
 
-    public DbSet<PayjoinReceiverSessionData> ReceiverSessions { get; set; } = null!;
+    internal DbSet<PayjoinReceiverSessionData> ReceiverSessions { get; set; } = null!;
 
-    public DbSet<PayjoinReceiverSessionEventData> ReceiverSessionEvents { get; set; } = null!;
+    internal DbSet<PayjoinReceiverSessionEventData> ReceiverSessionEvents { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        System.ArgumentNullException.ThrowIfNull(modelBuilder);
         base.OnModelCreating(modelBuilder);
         modelBuilder.HasDefaultSchema("BTCPayServer.Plugins.Payjoin");
         modelBuilder.Entity<PluginData>()
