@@ -48,34 +48,35 @@ dotnet test BTCPayServer.Plugins.Payjoin.sln -c Release
 
 ### Local BTCPay Plugin Loop
 
-If you want BTCPay Server to load the current local plugin build, you still need
-to stage the plugin into BTCPay's external plugin directory and restart BTCPay.
-The repository includes helper scripts for that:
+For local development, follow BTCPay's documented plugin-reference flow instead
+of copying builds into the external plugin directory.
 
-Unix shells:
+Add the plugin project to the BTCPay solution once:
 
 ```sh
-dotnet build BTCPayServer.Plugins.Payjoin/BTCPayServer.Plugins.Payjoin.csproj -c Debug
-bash ./scripts/stage-local-plugin.sh --configuration Debug
+cd btcpayserver
+dotnet sln btcpayserver.sln add ../BTCPayServer.Plugins.Payjoin/BTCPayServer.Plugins.Payjoin.csproj -s Plugins
 ```
 
-PowerShell:
+Then create `btcpayserver/BTCPayServer/appsettings.dev.json` with an absolute
+path to the local Debug build:
 
-```powershell
-dotnet build .\BTCPayServer.Plugins.Payjoin\BTCPayServer.Plugins.Payjoin.csproj -c Debug
-powershell -ExecutionPolicy Bypass -File .\scripts\stage-local-plugin.ps1 -Configuration Debug
+```json
+{
+  "DEBUG_PLUGINS": "/absolute/path/to/btcpayserver-payjoin-plugin/BTCPayServer.Plugins.Payjoin/bin/Debug/net8.0/BTCPayServer.Plugins.Payjoin.dll"
+}
 ```
 
-By default the staging scripts follow BTCPay's standard plugin directory
-convention for the current OS. If you want the script to inspect a specific
-BTCPay config file or your local instance overrides `plugindir`, pass either:
+After that, rebuild BTCPay in Debug so the plugin project is rebuilt as part of
+the solution:
 
-- `--plugins-root <path>` / `-PluginsRoot <path>`
-- `--settings-config <path>` / `-SettingsConfig <path>`
+```sh
+dotnet build btcpayserver/btcpayserver.sln -c Debug
+```
 
-The scripts replace the staged Payjoin plugin directory so stale local artifacts
-do not survive between rebuilds. Restart BTCPay after staging to load the new
-plugin bits.
+Restart BTCPay to reload the updated plugin bits. `DEBUG_PLUGINS` is only read
+by BTCPay Debug builds, so this is a local development workflow rather than a
+replacement for packaged plugin installation.
 
 ## Related Links
 
