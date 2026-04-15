@@ -232,6 +232,61 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
     ]
     [Trait("Integration", "Integration")]
+    public async Task CheckoutModelUsesPayjoinUrlAndCreatesReceiverSessionWhenEnabled()
+    {
+        using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
+        using var tester = CreateServerTester(newDb: true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+
+        await PayjoinIntegrationTestSupport.EnablePayjoinAsync(tester, context.User.StoreId, cancellationToken: cts.Token).ConfigureAwait(true);
+
+        var invoice = await context.User.BitPay.CreateInvoiceAsync(new Invoice
+        {
+            Price = 0.1m,
+            Currency = "BTC",
+            FullNotifications = true
+        }).WaitAsync(cts.Token).ConfigureAwait(true);
+
+        var checkoutModel = await PayjoinIntegrationTestSupport.GetCheckoutModelAsync(tester, invoice.Id, cts.Token).ConfigureAwait(true);
+
+        Assert.Contains("pj=", checkoutModel.InvoiceBitcoinUrl, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("pj=", checkoutModel.InvoiceBitcoinUrlQR, StringComparison.OrdinalIgnoreCase);
+
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyCreatedAsync(tester, invoice.Id, cts.Token).ConfigureAwait(true);
+    }
+
+    [Fact
+    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
+    ]
+    [Trait("Integration", "Integration")]
+    public async Task CheckoutModelFallsBackToPlainBip21WhenDisabled()
+    {
+        using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
+        using var tester = CreateServerTester(newDb: true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+
+        await PayjoinIntegrationTestSupport.DisablePayjoinAsync(tester, context.User.StoreId, cancellationToken: cts.Token).ConfigureAwait(true);
+
+        var invoice = await context.User.BitPay.CreateInvoiceAsync(new Invoice
+        {
+            Price = 0.1m,
+            Currency = "BTC",
+            FullNotifications = true
+        }).WaitAsync(cts.Token).ConfigureAwait(true);
+
+        var checkoutModel = await PayjoinIntegrationTestSupport.GetCheckoutModelAsync(tester, invoice.Id, cts.Token).ConfigureAwait(true);
+
+        Assert.DoesNotContain("pj=", checkoutModel.InvoiceBitcoinUrl, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("pj=", checkoutModel.InvoiceBitcoinUrlQR, StringComparison.OrdinalIgnoreCase);
+
+        var sessionStore = tester.PayTester.GetService<PayjoinReceiverSessionStore>();
+        Assert.False(sessionStore.TryGetSession(invoice.Id, out _));
+    }
+
+    [Fact
+    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
+    ]
+    [Trait("Integration", "Integration")]
     public async Task GetBip21IsIdempotentForSameInvoice()
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
