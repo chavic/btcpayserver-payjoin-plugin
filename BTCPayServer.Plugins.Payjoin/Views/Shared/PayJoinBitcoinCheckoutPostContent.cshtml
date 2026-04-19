@@ -1,0 +1,78 @@
+@using BTCPayServer.Models.InvoicingModels
+@inject BTCPayServer.Services.BTCPayServerEnvironment Env
+@model CheckoutModel
+
+<div v-if="hasPayjoin" class="d-flex align-items-center justify-content-center gap-1 text-muted mt-3" style="font-size: 0.8125rem;">
+    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+        <polyline points="9 12 11 14 15 10"></polyline>
+    </svg>
+    <span>PayJoin</span>
+</div>
+
+@if (Env.CheatMode)
+{
+    <div v-if="hasPayjoin" class="mt-3">
+        <button type="button"
+                class="btn btn-secondary rounded-pill w-100"
+                data-payjoin-run-test
+                data-label="Run Payjoin test payment"
+                :data-invoice-id="model.invoiceId"
+                :data-payment-url="model.invoiceBitcoinUrl"
+                data-test-endpoint="@Url.Action("RunTestPayment", "UIPayJoin")">
+            Run Payjoin test payment
+        </button>
+    </div>
+
+    <script>
+    (function () {
+        const resetDelayMs = 2000;
+        if (window.__payjoinRunTestBound) {
+            return;
+        }
+
+        window.__payjoinRunTestBound = true;
+
+        document.addEventListener('click', async event => {
+            const button = event.target.closest('[data-payjoin-run-test]');
+            if (!button) {
+                return;
+            }
+
+            const invoiceId = button.getAttribute('data-invoice-id');
+            const paymentUrl = button.getAttribute('data-payment-url');
+            const endpoint = button.getAttribute('data-test-endpoint');
+            if (!invoiceId || !paymentUrl || !endpoint) {
+                return;
+            }
+
+            const label = button.getAttribute('data-label') || button.textContent;
+            button.disabled = true;
+            button.textContent = 'Running...';
+
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ invoiceId, paymentUrl })
+                });
+                const payload = response.ok ? await response.json() : null;
+                if (payload && (payload.succeeded === true || payload.Succeeded === true)) {
+                    button.textContent = 'Done';
+                    setTimeout(() => {
+                        button.textContent = label;
+                        button.disabled = false;
+                    }, resetDelayMs);
+                    return;
+                }
+            } catch (error) {
+                console.error('Payjoin test payment failed', error);
+            }
+
+            button.textContent = label;
+            button.disabled = false;
+        });
+    })();
+    </script>
+}
