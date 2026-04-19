@@ -250,7 +250,11 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         var checkoutModel = await PayjoinIntegrationTestSupport.GetCheckoutModelAsync(tester, invoice.Id, cts.Token).ConfigureAwait(true);
 
         Assert.Contains("pj=", checkoutModel.InvoiceBitcoinUrl, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("pjos=0", checkoutModel.InvoiceBitcoinUrl, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("pj=", checkoutModel.InvoiceBitcoinUrlQR, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("pjos=0", checkoutModel.InvoiceBitcoinUrlQR, StringComparison.OrdinalIgnoreCase);
+        Assert.True(checkoutModel.AdditionalData.ContainsKey(PayjoinBitcoinCheckoutModelExtension.PlainBitcoinUrlKey));
+        Assert.True(checkoutModel.AdditionalData.ContainsKey(PayjoinBitcoinCheckoutModelExtension.PayjoinBitcoinUrlKey));
 
         await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyCreatedAsync(tester, invoice.Id, cts.Token).ConfigureAwait(true);
     }
@@ -277,7 +281,11 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         var checkoutModel = await PayjoinIntegrationTestSupport.GetCheckoutModelAsync(tester, invoice.Id, cts.Token).ConfigureAwait(true);
 
         Assert.DoesNotContain("pj=", checkoutModel.InvoiceBitcoinUrl, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("pjos=", checkoutModel.InvoiceBitcoinUrl, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("pj=", checkoutModel.InvoiceBitcoinUrlQR, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("pjos=", checkoutModel.InvoiceBitcoinUrlQR, StringComparison.OrdinalIgnoreCase);
+        Assert.False(checkoutModel.AdditionalData.ContainsKey(PayjoinBitcoinCheckoutModelExtension.PlainBitcoinUrlKey));
+        Assert.False(checkoutModel.AdditionalData.ContainsKey(PayjoinBitcoinCheckoutModelExtension.PayjoinBitcoinUrlKey));
 
         var sessionStore = tester.PayTester.GetService<PayjoinReceiverSessionStore>();
         Assert.False(sessionStore.TryGetSession(invoice.Id, out _));
