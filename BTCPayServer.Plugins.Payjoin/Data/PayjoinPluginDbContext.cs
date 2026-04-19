@@ -23,17 +23,16 @@ public class PayjoinPluginDbContext : DbContext
     {
         System.ArgumentNullException.ThrowIfNull(modelBuilder);
         base.OnModelCreating(modelBuilder);
-        modelBuilder.HasDefaultSchema("BTCPayServer.Plugins.Payjoin");
+        modelBuilder.HasDefaultSchema(PayjoinPluginDbSchema.SchemaName);
         modelBuilder.Entity<PluginData>()
-            .ToTable("PluginRecords");
+            .ToTable(PayjoinPluginDbSchema.PluginRecordsTable);
         modelBuilder.Entity<PayjoinReceiverSessionData>(entity =>
         {
-            entity.ToTable("ReceiverSessions");
+            entity.ToTable(PayjoinPluginDbSchema.ReceiverSessionsTable);
             entity.HasKey(x => x.InvoiceId);
-            entity.Property(x => x.InvoiceId).HasColumnType("text");
-            entity.Property(x => x.StoreId).HasColumnType("text");
-            entity.Property(x => x.ReceiverAddress).HasColumnType("text");
-            entity.Property(x => x.OhttpRelayUrl).HasColumnType("text");
+            entity.Property(x => x.ReceiverAddress).HasMaxLength(PayjoinPluginDbSchema.ReceiverAddressMaxLength);
+            entity.Property(x => x.OhttpRelayUrl).HasMaxLength(PayjoinPluginDbSchema.OhttpRelayUrlMaxLength);
+            entity.Property(x => x.ContributedInputTransactionId).HasMaxLength(PayjoinPluginDbSchema.TransactionIdMaxLength);
             entity.HasMany(x => x.Events)
                 .WithOne(x => x.Session)
                 .HasForeignKey(x => x.InvoiceId)
@@ -41,9 +40,8 @@ public class PayjoinPluginDbContext : DbContext
         });
         modelBuilder.Entity<PayjoinReceiverSessionEventData>(entity =>
         {
-            entity.ToTable("ReceiverSessionEvents");
+            entity.ToTable(PayjoinPluginDbSchema.ReceiverSessionEventsTable);
             entity.HasKey(x => x.Id);
-            entity.Property(x => x.Event).HasColumnType("text");
             entity.HasIndex(x => new { x.InvoiceId, x.Sequence }).IsUnique();
         });
     }

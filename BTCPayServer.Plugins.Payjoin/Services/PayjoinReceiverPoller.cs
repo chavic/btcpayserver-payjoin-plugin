@@ -253,7 +253,10 @@ public sealed class PayjoinReceiverPoller : BackgroundService
 
         if (invoice.GetInvoiceState().Status != InvoiceStatus.New)
         {
-            _sessionStore.RequestClose(session.InvoiceId, invoice.GetInvoiceState().Status);
+            if (_sessionStore.RequestClose(session.InvoiceId, invoice.GetInvoiceState().Status))
+            {
+                session.RequestClose(invoice.GetInvoiceState().Status, DateTimeOffset.UtcNow);
+            }
         }
 
         return true;

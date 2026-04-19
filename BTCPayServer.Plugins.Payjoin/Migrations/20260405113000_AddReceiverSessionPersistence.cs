@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using System;
+using BTCPayServer.Plugins.Payjoin.Data;
 
 namespace BTCPayServer.Plugins.Payjoin.Migrations
 {
@@ -14,21 +15,21 @@ namespace BTCPayServer.Plugins.Payjoin.Migrations
             ArgumentNullException.ThrowIfNull(migrationBuilder);
 
             migrationBuilder.CreateTable(
-                name: "ReceiverSessions",
-                schema: "BTCPayServer.Plugins.Payjoin",
+                name: PayjoinPluginDbSchema.ReceiverSessionsTable,
+                schema: PayjoinPluginDbSchema.SchemaName,
                 columns: table => new
                 {
                     InvoiceId = table.Column<string>(type: "text", nullable: false),
                     StoreId = table.Column<string>(type: "text", nullable: false),
-                    ReceiverAddress = table.Column<string>(type: "text", nullable: false),
-                    OhttpRelayUrl = table.Column<string>(type: "text", nullable: false),
+                    ReceiverAddress = table.Column<string>(type: "character varying(128)", maxLength: PayjoinPluginDbSchema.ReceiverAddressMaxLength, nullable: false),
+                    OhttpRelayUrl = table.Column<string>(type: "character varying(2048)", maxLength: PayjoinPluginDbSchema.OhttpRelayUrlMaxLength, nullable: false),
                     MonitoringExpiresAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     UpdatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     IsCloseRequested = table.Column<bool>(type: "boolean", nullable: false),
                     CloseInvoiceStatus = table.Column<int>(type: "integer", nullable: true),
                     CloseRequestedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
-                    ContributedInputTransactionId = table.Column<string>(type: "text", nullable: true),
+                    ContributedInputTransactionId = table.Column<string>(type: "character varying(64)", maxLength: PayjoinPluginDbSchema.TransactionIdMaxLength, nullable: true),
                     ContributedInputOutputIndex = table.Column<int>(type: "integer", nullable: true)
                 },
                 constraints: table =>
@@ -37,8 +38,8 @@ namespace BTCPayServer.Plugins.Payjoin.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "ReceiverSessionEvents",
-                schema: "BTCPayServer.Plugins.Payjoin",
+                name: PayjoinPluginDbSchema.ReceiverSessionEventsTable,
+                schema: PayjoinPluginDbSchema.SchemaName,
                 columns: table => new
                 {
                     Id = table.Column<long>(type: "bigint", nullable: false)
@@ -54,16 +55,16 @@ namespace BTCPayServer.Plugins.Payjoin.Migrations
                     table.ForeignKey(
                         name: "FK_ReceiverSessionEvents_ReceiverSessions_InvoiceId",
                         column: x => x.InvoiceId,
-                        principalSchema: "BTCPayServer.Plugins.Payjoin",
-                        principalTable: "ReceiverSessions",
+                        principalSchema: PayjoinPluginDbSchema.SchemaName,
+                        principalTable: PayjoinPluginDbSchema.ReceiverSessionsTable,
                         principalColumn: "InvoiceId",
                         onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateIndex(
                 name: "IX_ReceiverSessionEvents_InvoiceId_Sequence",
-                schema: "BTCPayServer.Plugins.Payjoin",
-                table: "ReceiverSessionEvents",
+                schema: PayjoinPluginDbSchema.SchemaName,
+                table: PayjoinPluginDbSchema.ReceiverSessionEventsTable,
                 columns: new[] { "InvoiceId", "Sequence" },
                 unique: true);
         }
@@ -73,12 +74,12 @@ namespace BTCPayServer.Plugins.Payjoin.Migrations
             ArgumentNullException.ThrowIfNull(migrationBuilder);
 
             migrationBuilder.DropTable(
-                name: "ReceiverSessionEvents",
-                schema: "BTCPayServer.Plugins.Payjoin");
+                name: PayjoinPluginDbSchema.ReceiverSessionEventsTable,
+                schema: PayjoinPluginDbSchema.SchemaName);
 
             migrationBuilder.DropTable(
-                name: "ReceiverSessions",
-                schema: "BTCPayServer.Plugins.Payjoin");
+                name: PayjoinPluginDbSchema.ReceiverSessionsTable,
+                schema: PayjoinPluginDbSchema.SchemaName);
         }
     }
 }

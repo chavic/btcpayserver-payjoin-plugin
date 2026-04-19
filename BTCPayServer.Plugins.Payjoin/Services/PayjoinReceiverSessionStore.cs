@@ -13,9 +13,7 @@ namespace BTCPayServer.Plugins.Payjoin.Services;
 public sealed class PayjoinReceiverSessionStore
 {
     private readonly object _sync = new();
-    private readonly Dictionary<string, PayjoinReceiverSessionState> _sessions = new(StringComparer.Ordinal);
     private readonly PayjoinPluginDbContextFactory _pluginDbContextFactory;
-    private bool _loaded;
 
     public PayjoinReceiverSessionStore(PayjoinPluginDbContextFactory pluginDbContextFactory)
     {
@@ -31,33 +29,32 @@ public sealed class PayjoinReceiverSessionStore
         DateTimeOffset monitoringExpiresAt,
         out bool created)
     {
+        ArgumentNullException.ThrowIfNull(ohttpRelayUrl);
         lock (_sync)
         {
-            EnsureLoadedCore();
-
-            if (_sessions.TryGetValue(invoiceId, out var existing))
+            using var context = _pluginDbContextFactory.CreateContext();
+            if (TryLoadSessionCore(context, invoiceId, trackSession: false, out var existing))
             {
                 created = false;
                 return existing;
             }
 
             var now = DateTimeOffset.UtcNow;
-            var session = new PayjoinReceiverSessionState(
-                invoiceId,
-                storeId,
-                receiverAddress,
-                ohttpRelayUrl,
-                monitoringExpiresAt,
-                now,
-                now);
+            var sessionData = new PayjoinReceiverSessionData
+            {
+                InvoiceId = invoiceId,
+                StoreId = storeId,
+                ReceiverAddress = receiverAddress,
+                OhttpRelayUrl = ohttpRelayUrl.AbsoluteUri,
+                MonitoringExpiresAt = monitoringExpiresAt,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
 
-            using var context = _pluginDbContextFactory.CreateContext();
-            context.ReceiverSessions.Add(CreateData(session.Snapshot()));
+            context.ReceiverSessions.Add(sessionData);
             context.SaveChanges();
-
-            _sessions.Add(invoiceId, session);
             created = true;
-            return session;
+            return CreateState(sessionData);
         }
     }
 
@@ -65,8 +62,8 @@ public sealed class PayjoinReceiverSessionStore
     {
         lock (_sync)
         {
-            EnsureLoadedCore();
-            return _sessions.TryGetValue(invoiceId, out session);
+            using var context = _pluginDbContextFactory.CreateContext();
+            return TryLoadSessionCore(context, invoiceId, trackSession: false, out session);
         }
     }
 
@@ -74,8 +71,8 @@ public sealed class PayjoinReceiverSessionStore
     {
         lock (_sync)
         {
-            EnsureLoadedCore();
-            return _sessions.Values.ToArray();
+            using var context = _pluginDbContextFactory.CreateContext();
+            return LoadSessionsCore(context);
         }
     }
 
@@ -83,27 +80,22 @@ public sealed class PayjoinReceiverSessionStore
     {
         lock (_sync)
         {
-            EnsureLoadedCore();
-            if (!_sessions.Remove(invoiceId))
+            using var context = _pluginDbContextFactory.CreateContext();
+            var sessionData = context.ReceiverSessions.SingleOrDefault(x => x.InvoiceId == invoiceId);
+            if (sessionData is null)
             {
                 return false;
             }
 
-            using var context = _pluginDbContextFactory.CreateContext();
-            var events = context.ReceiverSessionEvents
+            var sessionEvents = context.ReceiverSessionEvents
                 .Where(x => x.InvoiceId == invoiceId)
                 .ToArray();
-            if (events.Length > 0)
+            if (sessionEvents.Length > 0)
             {
-                context.ReceiverSessionEvents.RemoveRange(events);
+                context.ReceiverSessionEvents.RemoveRange(sessionEvents);
             }
 
-            var sessionData = context.ReceiverSessions.SingleOrDefault(x => x.InvoiceId == invoiceId);
-            if (sessionData is not null)
-            {
-                context.ReceiverSessions.Remove(sessionData);
-            }
-
+            context.ReceiverSessions.Remove(sessionData);
             context.SaveChanges();
             return true;
         }
@@ -113,8 +105,8 @@ public sealed class PayjoinReceiverSessionStore
     {
         lock (_sync)
         {
-            EnsureLoadedCore();
-            if (!_sessions.TryGetValue(invoiceId, out var session))
+            using var context = _pluginDbContextFactory.CreateContext();
+            if (!TryLoadSessionCore(context, invoiceId, trackSession: true, out var session, out var sessionData))
             {
                 return false;
             }
@@ -125,10 +117,7 @@ public sealed class PayjoinReceiverSessionStore
                 return false;
             }
 
-            var snapshot = session.Snapshot();
-            using var context = _pluginDbContextFactory.CreateContext();
-            var sessionData = GetOrCreateSessionData(context, snapshot);
-            ApplySnapshot(sessionData, snapshot);
+            ApplySnapshot(sessionData!, session.Snapshot());
             context.SaveChanges();
             return true;
         }
@@ -139,18 +128,14 @@ public sealed class PayjoinReceiverSessionStore
         ArgumentNullException.ThrowIfNull(outPoint);
         lock (_sync)
         {
-            EnsureLoadedCore();
-            if (!_sessions.TryGetValue(invoiceId, out var session))
+            using var context = _pluginDbContextFactory.CreateContext();
+            if (!TryLoadSessionCore(context, invoiceId, trackSession: true, out var session, out var sessionData))
             {
                 return false;
             }
 
             session.SetContributedInput(outPoint, DateTimeOffset.UtcNow);
-
-            var snapshot = session.Snapshot();
-            using var context = _pluginDbContextFactory.CreateContext();
-            var sessionData = GetOrCreateSessionData(context, snapshot);
-            ApplySnapshot(sessionData, snapshot);
+            ApplySnapshot(sessionData!, session.Snapshot());
             context.SaveChanges();
             return true;
         }
@@ -159,17 +144,60 @@ public sealed class PayjoinReceiverSessionStore
     internal JsonReceiverSessionPersister CreatePersister(PayjoinReceiverSessionState session)
     {
         ArgumentNullException.ThrowIfNull(session);
-        return new DatabaseBackedReceiverPersister(this, session);
+        return new DatabaseBackedReceiverPersister(this, session.InvoiceId);
     }
 
-    private void EnsureLoadedCore()
+    private void AppendEvent(string invoiceId, string @event)
     {
-        if (_loaded)
+        lock (_sync)
         {
-            return;
-        }
+            using var context = _pluginDbContextFactory.CreateContext();
+            var sessionData = context.ReceiverSessions.SingleOrDefault(x => x.InvoiceId == invoiceId);
+            if (sessionData is null)
+            {
+                throw new InvalidOperationException($"Payjoin receiver session {invoiceId} is no longer active.");
+            }
 
-        using var context = _pluginDbContextFactory.CreateContext();
+            var createdAt = DateTimeOffset.UtcNow;
+            var lastSequence = context.ReceiverSessionEvents
+                .Where(x => x.InvoiceId == invoiceId)
+                .Select(x => (int?)x.Sequence)
+                .Max() ?? 0;
+            var sequence = checked(lastSequence + 1);
+
+            // TODO: Revisit receiver-session event retention before the log grows without bound.
+            sessionData.UpdatedAt = createdAt;
+            context.ReceiverSessionEvents.Add(new PayjoinReceiverSessionEventData
+            {
+                InvoiceId = invoiceId,
+                Sequence = sequence,
+                Event = @event,
+                CreatedAt = createdAt
+            });
+            context.SaveChanges();
+        }
+    }
+
+    private static PayjoinReceiverSessionState CreateState(PayjoinReceiverSessionData sessionData, string[]? events = null)
+    {
+        return new PayjoinReceiverSessionState(
+            sessionData.InvoiceId,
+            sessionData.StoreId,
+            sessionData.ReceiverAddress,
+            new SystemUri(sessionData.OhttpRelayUrl, UriKind.Absolute),
+            sessionData.MonitoringExpiresAt,
+            sessionData.CreatedAt,
+            sessionData.UpdatedAt,
+            sessionData.IsCloseRequested,
+            sessionData.CloseInvoiceStatus,
+            sessionData.CloseRequestedAt,
+            sessionData.ContributedInputTransactionId,
+            sessionData.ContributedInputOutputIndex,
+            events ?? []);
+    }
+
+    private static IReadOnlyCollection<PayjoinReceiverSessionState> LoadSessionsCore(PayjoinPluginDbContext context)
+    {
         var sessionData = context.ReceiverSessions
             .AsNoTracking()
             .OrderBy(x => x.CreatedAt)
@@ -179,90 +207,61 @@ public sealed class PayjoinReceiverSessionStore
             .OrderBy(x => x.InvoiceId)
             .ThenBy(x => x.Sequence)
             .ToArray()
-            .GroupBy(x => x.InvoiceId, StringComparer.Ordinal)
-            .ToDictionary(x => x.Key, x => x.Select(e => e.Event).ToArray(), StringComparer.Ordinal);
+            .GroupBy(x => x.InvoiceId)
+            .ToDictionary(x => x.Key, x => x.Select(e => e.Event).ToArray());
 
-        _sessions.Clear();
-        foreach (var row in sessionData)
-        {
-            sessionEvents.TryGetValue(row.InvoiceId, out var events);
-            _sessions[row.InvoiceId] = new PayjoinReceiverSessionState(
-                row.InvoiceId,
-                row.StoreId,
-                row.ReceiverAddress,
-                new SystemUri(row.OhttpRelayUrl, UriKind.Absolute),
-                row.MonitoringExpiresAt,
-                row.CreatedAt,
-                row.UpdatedAt,
-                row.IsCloseRequested,
-                row.CloseInvoiceStatus,
-                row.CloseRequestedAt,
-                row.ContributedInputTransactionId,
-                row.ContributedInputOutputIndex,
-                events ?? []);
-        }
-
-        _loaded = true;
+        return sessionData
+            .Select(row => CreateState(row, sessionEvents.GetValueOrDefault(row.InvoiceId)))
+            .ToArray();
     }
 
-    private void AppendEvent(PayjoinReceiverSessionState session, string @event)
+    private static bool TryLoadSessionCore(
+        PayjoinPluginDbContext context,
+        string invoiceId,
+        bool trackSession,
+        out PayjoinReceiverSessionState session)
+    {
+        return TryLoadSessionCore(context, invoiceId, trackSession, out session, out _);
+    }
+
+    private static bool TryLoadSessionCore(
+        PayjoinPluginDbContext context,
+        string invoiceId,
+        bool trackSession,
+        out PayjoinReceiverSessionState session,
+        out PayjoinReceiverSessionData? sessionData)
+    {
+        var sessionQuery = trackSession
+            ? context.ReceiverSessions
+            : context.ReceiverSessions.AsNoTracking();
+        sessionData = sessionQuery.SingleOrDefault(x => x.InvoiceId == invoiceId);
+        if (sessionData is null)
+        {
+            session = null!;
+            return false;
+        }
+
+        session = CreateState(sessionData, LoadEventsCore(context, invoiceId));
+        return true;
+    }
+
+    private static string[] LoadEventsCore(PayjoinPluginDbContext context, string invoiceId)
+    {
+        return context.ReceiverSessionEvents
+            .AsNoTracking()
+            .Where(x => x.InvoiceId == invoiceId)
+            .OrderBy(x => x.Sequence)
+            .Select(x => x.Event)
+            .ToArray();
+    }
+
+    private string[] LoadEvents(string invoiceId)
     {
         lock (_sync)
         {
-            EnsureLoadedCore();
-            if (!_sessions.TryGetValue(session.InvoiceId, out var trackedSession) || !ReferenceEquals(trackedSession, session))
-            {
-                throw new InvalidOperationException($"Payjoin receiver session {session.InvoiceId} is no longer active.");
-            }
-
-            var createdAt = DateTimeOffset.UtcNow;
-            var sequence = trackedSession.AddEvent(@event, createdAt);
-
             using var context = _pluginDbContextFactory.CreateContext();
-            var snapshot = trackedSession.Snapshot();
-            var sessionData = GetOrCreateSessionData(context, snapshot);
-            ApplySnapshot(sessionData, snapshot);
-            context.ReceiverSessionEvents.Add(new PayjoinReceiverSessionEventData
-            {
-                InvoiceId = snapshot.InvoiceId,
-                Sequence = sequence,
-                Event = @event,
-                CreatedAt = createdAt
-            });
-            context.SaveChanges();
+            return LoadEventsCore(context, invoiceId);
         }
-    }
-
-    private static PayjoinReceiverSessionData CreateData(PayjoinReceiverSessionSnapshot snapshot)
-    {
-        return new PayjoinReceiverSessionData
-        {
-            InvoiceId = snapshot.InvoiceId,
-            StoreId = snapshot.StoreId,
-            ReceiverAddress = snapshot.ReceiverAddress,
-            OhttpRelayUrl = snapshot.OhttpRelayUrl.AbsoluteUri,
-            MonitoringExpiresAt = snapshot.MonitoringExpiresAt,
-            CreatedAt = snapshot.CreatedAt,
-            UpdatedAt = snapshot.UpdatedAt,
-            IsCloseRequested = snapshot.IsCloseRequested,
-            CloseInvoiceStatus = snapshot.CloseInvoiceStatus,
-            CloseRequestedAt = snapshot.CloseRequestedAt,
-            ContributedInputTransactionId = snapshot.ContributedInputTransactionId,
-            ContributedInputOutputIndex = snapshot.ContributedInputOutputIndex
-        };
-    }
-
-    private static PayjoinReceiverSessionData GetOrCreateSessionData(PayjoinPluginDbContext context, PayjoinReceiverSessionSnapshot snapshot)
-    {
-        var sessionData = context.ReceiverSessions.SingleOrDefault(x => x.InvoiceId == snapshot.InvoiceId);
-        if (sessionData is not null)
-        {
-            return sessionData;
-        }
-
-        sessionData = CreateData(snapshot);
-        context.ReceiverSessions.Add(sessionData);
-        return sessionData;
     }
 
     private static void ApplySnapshot(PayjoinReceiverSessionData target, PayjoinReceiverSessionSnapshot snapshot)
@@ -283,20 +282,20 @@ public sealed class PayjoinReceiverSessionStore
     private sealed class DatabaseBackedReceiverPersister : JsonReceiverSessionPersister
     {
         private readonly PayjoinReceiverSessionStore _store;
-        private readonly PayjoinReceiverSessionState _session;
+        private readonly string _invoiceId;
 
-        public DatabaseBackedReceiverPersister(PayjoinReceiverSessionStore store, PayjoinReceiverSessionState session)
+        public DatabaseBackedReceiverPersister(PayjoinReceiverSessionStore store, string invoiceId)
         {
             _store = store;
-            _session = session;
+            _invoiceId = invoiceId;
         }
 
         public void Save(string @event)
         {
-            _store.AppendEvent(_session, @event);
+            _store.AppendEvent(_invoiceId, @event);
         }
 
-        public string[] Load() => _session.GetEvents();
+        public string[] Load() => _store.LoadEvents(_invoiceId);
 
         public void Close()
         {
