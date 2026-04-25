@@ -83,6 +83,28 @@ public class PayjoinReceiverSessionStoreTests
     }
 
     [Fact]
+    public void ContributedInputAndEventsReplayTogetherThroughFreshStoreInstance()
+    {
+        using var testContext = new TestContext();
+        var firstStore = testContext.CreateStore();
+        var firstSession = CreateSession(firstStore, "invoice-input-events", out _);
+        var expectedOutPoint = new OutPoint(uint256.Parse("2222222222222222222222222222222222222222222222222222222222222222"), 2);
+        var firstPersister = firstStore.CreatePersister(firstSession);
+
+        firstPersister.Save("event-before-input");
+        Assert.True(firstStore.TryPersistContributedInput(firstSession.InvoiceId, expectedOutPoint));
+        firstPersister.Save("event-after-input");
+
+        var replayedStore = testContext.CreateStore();
+        Assert.True(replayedStore.TryGetSession(firstSession.InvoiceId, out var replayedSession));
+        Assert.True(replayedSession!.TryGetContributedInput(out var actualOutPoint));
+        Assert.Equal(expectedOutPoint, actualOutPoint);
+
+        var replayedPersister = replayedStore.CreatePersister(replayedSession);
+        Assert.Equal(new[] { "event-before-input", "event-after-input" }, replayedPersister.Load());
+    }
+
+    [Fact]
     public void RemoveSessionDeletesSessionAndEvents()
     {
         using var testContext = new TestContext();
