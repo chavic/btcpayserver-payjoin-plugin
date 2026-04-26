@@ -67,13 +67,14 @@ These items are complete enough that they should not be reopened without a concr
 
 The immediate focus is the session-persistence review branch, `chavic/persist-receiver-sessions`.
 
-Before treating that branch as ready to merge, address the review feedback around receiver-session state ownership:
+Before treating that branch as ready to merge, finish the review feedback around receiver-session state ownership:
 
-- replace or justify the global `_sync` lock in `PayjoinReceiverSessionStore`
-- avoid memory-first/session-object mutation patterns where DB writes can fail afterward
-- prefer database-authoritative operations for session snapshots and event appends
-- make event sequencing safe without relying on a process-local monitor lock
-- keep the current `PayjoinReceiverSessionState` either immutable/snapshot-only or clearly scoped as a detached DTO
+- done locally in `44ecd22`: move `PayjoinReceiverSessionState` into its own immutable snapshot file
+- done locally in `44ecd22`: remove the global `_sync` lock from `PayjoinReceiverSessionStore`
+- done locally in `44ecd22`: avoid memory-first/session-object mutation patterns where DB writes can fail afterward
+- done locally in `44ecd22`: prefer database-authoritative operations for session snapshots and event appends
+- done locally in `44ecd22`: make event sequencing rely on the durable `(InvoiceId, Sequence)` unique index plus retry instead of a process-local monitor lock
+- still pending: validate the refactor beyond focused unit tests before pushing the session branch
 
 Add this error report to the active review queue:
 
