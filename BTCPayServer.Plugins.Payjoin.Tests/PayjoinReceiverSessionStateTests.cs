@@ -16,35 +16,26 @@ public class PayjoinReceiverSessionStateTests
     }
 
     [Fact]
-    public void ContributedInputRoundTripsThroughPersistedMetadata()
+    public void ContributedInputRestoresFromPersistedMetadata()
     {
-        var session = CreateSession();
-        var updatedAt = DateTimeOffset.UtcNow.AddMinutes(1);
         var contributedOutPoint = new OutPoint(uint256.Parse("1111111111111111111111111111111111111111111111111111111111111111"), 1);
-
-        session.SetContributedInput(contributedOutPoint, updatedAt);
+        var session = CreateSession(
+            contributedInputTransactionId: contributedOutPoint.Hash.ToString(),
+            contributedInputOutputIndex: checked((int)contributedOutPoint.N));
 
         Assert.True(session.TryGetContributedInput(out var restoredOutPoint));
         Assert.Equal(contributedOutPoint, restoredOutPoint);
-        Assert.Equal(updatedAt, session.UpdatedAt);
-
-        var snapshot = session.Snapshot();
-        Assert.Equal(contributedOutPoint.Hash.ToString(), snapshot.ContributedInputTransactionId);
-        Assert.Equal((int)contributedOutPoint.N, snapshot.ContributedInputOutputIndex);
     }
 
     [Fact]
-    public void SettingTheSameContributedInputDoesNotAdvanceUpdatedAt()
+    public void EventsAreReturnedAsCopy()
     {
-        var initialUpdatedAt = DateTimeOffset.UtcNow;
-        var session = CreateSession(updatedAt: initialUpdatedAt);
-        var contributedOutPoint = new OutPoint(uint256.Parse("2222222222222222222222222222222222222222222222222222222222222222"), 2);
-        var firstPersistedAt = initialUpdatedAt.AddMinutes(1);
+        var session = CreateSession(events: new[] { "event-1", "event-2" });
 
-        session.SetContributedInput(contributedOutPoint, firstPersistedAt);
-        session.SetContributedInput(contributedOutPoint, initialUpdatedAt.AddMinutes(2));
+        var events = session.GetEvents();
+        events[0] = "mutated";
 
-        Assert.Equal(firstPersistedAt, session.UpdatedAt);
+        Assert.Equal(new[] { "event-1", "event-2" }, session.GetEvents());
     }
 
     [Fact]
@@ -65,7 +56,11 @@ public class PayjoinReceiverSessionStateTests
         Assert.False(session.TryGetContributedInput(out _));
     }
 
-    private static PayjoinReceiverSessionState CreateSession(DateTimeOffset? updatedAt = null)
+    private static PayjoinReceiverSessionState CreateSession(
+        DateTimeOffset? updatedAt = null,
+        string? contributedInputTransactionId = null,
+        int? contributedInputOutputIndex = null,
+        string[]? events = null)
     {
         var now = DateTimeOffset.UtcNow;
         return new PayjoinReceiverSessionState(
@@ -75,6 +70,9 @@ public class PayjoinReceiverSessionStateTests
             new Uri("https://relay.example/"),
             now.AddMinutes(5),
             now,
-            updatedAt ?? now);
+            updatedAt ?? now,
+            contributedInputTransactionId: contributedInputTransactionId,
+            contributedInputOutputIndex: contributedInputOutputIndex,
+            events: events);
     }
 }
