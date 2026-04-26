@@ -9,7 +9,7 @@ using PayjoinUri = Payjoin.Uri;
 
 namespace BTCPayServer.Plugins.Payjoin.Services;
 
-public sealed class PayjoinInvoicePaymentUrlService
+public sealed class PayjoinInvoicePaymentUrlService : IPayjoinInvoicePaymentUrlService
 {
     private const string CryptoCode = "BTC";
 
