@@ -83,6 +83,29 @@ public class PayjoinReceiverSessionStoreTests
     }
 
     [Fact]
+    public void PersistingSameContributedInputDoesNotAdvanceUpdatedAt()
+    {
+        using var testContext = new TestContext();
+        var store = testContext.CreateStore();
+        var session = CreateSession(store, "invoice-same-input", out _);
+        var expectedOutPoint = new OutPoint(uint256.Parse("3333333333333333333333333333333333333333333333333333333333333333"), 3);
+
+        Assert.True(store.TryPersistContributedInput(session.InvoiceId, expectedOutPoint));
+        using var firstContext = testContext.CreateDbContext();
+        var firstUpdatedAt = firstContext.ReceiverSessions
+            .Single(x => x.InvoiceId == session.InvoiceId)
+            .UpdatedAt;
+
+        Assert.True(store.TryPersistContributedInput(session.InvoiceId, expectedOutPoint));
+        using var secondContext = testContext.CreateDbContext();
+        var secondUpdatedAt = secondContext.ReceiverSessions
+            .Single(x => x.InvoiceId == session.InvoiceId)
+            .UpdatedAt;
+
+        Assert.Equal(firstUpdatedAt, secondUpdatedAt);
+    }
+
+    [Fact]
     public void ContributedInputAndEventsReplayTogetherThroughFreshStoreInstance()
     {
         using var testContext = new TestContext();

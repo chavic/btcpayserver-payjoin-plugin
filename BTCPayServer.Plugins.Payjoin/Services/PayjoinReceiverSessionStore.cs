@@ -12,7 +12,6 @@ namespace BTCPayServer.Plugins.Payjoin.Services;
 
 public sealed class PayjoinReceiverSessionStore
 {
-    private readonly object _sync = new();
     private readonly PayjoinPluginDbContextFactory _pluginDbContextFactory;
 
     public PayjoinReceiverSessionStore(PayjoinPluginDbContextFactory pluginDbContextFactory)
@@ -30,115 +29,125 @@ public sealed class PayjoinReceiverSessionStore
         out bool created)
     {
         ArgumentNullException.ThrowIfNull(ohttpRelayUrl);
-        lock (_sync)
+        using var context = _pluginDbContextFactory.CreateContext();
+        if (TryLoadSessionCore(context, invoiceId, out var existing))
         {
-            using var context = _pluginDbContextFactory.CreateContext();
-            if (TryLoadSessionCore(context, invoiceId, trackSession: false, out var existing))
+            created = false;
+            return existing;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var sessionData = new PayjoinReceiverSessionData
+        {
+            InvoiceId = invoiceId,
+            StoreId = storeId,
+            ReceiverAddress = receiverAddress,
+            OhttpRelayUrl = ohttpRelayUrl.AbsoluteUri,
+            MonitoringExpiresAt = monitoringExpiresAt,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        context.ReceiverSessions.Add(sessionData);
+        try
+        {
+            context.SaveChanges();
+            created = true;
+            return CreateState(sessionData);
+        }
+        catch (DbUpdateException)
+        {
+            context.ChangeTracker.Clear();
+            if (TryLoadSessionCore(context, invoiceId, out existing))
             {
                 created = false;
                 return existing;
             }
 
-            var now = DateTimeOffset.UtcNow;
-            var sessionData = new PayjoinReceiverSessionData
-            {
-                InvoiceId = invoiceId,
-                StoreId = storeId,
-                ReceiverAddress = receiverAddress,
-                OhttpRelayUrl = ohttpRelayUrl.AbsoluteUri,
-                MonitoringExpiresAt = monitoringExpiresAt,
-                CreatedAt = now,
-                UpdatedAt = now
-            };
-
-            context.ReceiverSessions.Add(sessionData);
-            context.SaveChanges();
-            created = true;
-            return CreateState(sessionData);
+            throw;
         }
     }
 
     public bool TryGetSession(string invoiceId, out PayjoinReceiverSessionState? session)
     {
-        lock (_sync)
-        {
-            using var context = _pluginDbContextFactory.CreateContext();
-            return TryLoadSessionCore(context, invoiceId, trackSession: false, out session);
-        }
+        using var context = _pluginDbContextFactory.CreateContext();
+        return TryLoadSessionCore(context, invoiceId, out session);
     }
 
     public IReadOnlyCollection<PayjoinReceiverSessionState> GetSessions()
     {
-        lock (_sync)
-        {
-            using var context = _pluginDbContextFactory.CreateContext();
-            return LoadSessionsCore(context);
-        }
+        using var context = _pluginDbContextFactory.CreateContext();
+        return LoadSessionsCore(context);
     }
 
     public bool RemoveSession(string invoiceId)
     {
-        lock (_sync)
+        using var context = _pluginDbContextFactory.CreateContext();
+        var sessionData = context.ReceiverSessions.SingleOrDefault(x => x.InvoiceId == invoiceId);
+        if (sessionData is null)
         {
-            using var context = _pluginDbContextFactory.CreateContext();
-            var sessionData = context.ReceiverSessions.SingleOrDefault(x => x.InvoiceId == invoiceId);
-            if (sessionData is null)
-            {
-                return false;
-            }
-
-            var sessionEvents = context.ReceiverSessionEvents
-                .Where(x => x.InvoiceId == invoiceId)
-                .ToArray();
-            if (sessionEvents.Length > 0)
-            {
-                context.ReceiverSessionEvents.RemoveRange(sessionEvents);
-            }
-
-            context.ReceiverSessions.Remove(sessionData);
-            context.SaveChanges();
-            return true;
+            return false;
         }
+
+        var sessionEvents = context.ReceiverSessionEvents
+            .Where(x => x.InvoiceId == invoiceId)
+            .ToArray();
+        if (sessionEvents.Length > 0)
+        {
+            context.ReceiverSessionEvents.RemoveRange(sessionEvents);
+        }
+
+        context.ReceiverSessions.Remove(sessionData);
+        context.SaveChanges();
+        return true;
     }
 
     public bool RequestClose(string invoiceId, InvoiceStatus invoiceStatus)
     {
-        lock (_sync)
+        using var context = _pluginDbContextFactory.CreateContext();
+        var sessionData = context.ReceiverSessions.SingleOrDefault(x => x.InvoiceId == invoiceId);
+        if (sessionData is null)
         {
-            using var context = _pluginDbContextFactory.CreateContext();
-            if (!TryLoadSessionCore(context, invoiceId, trackSession: true, out var session, out var sessionData))
-            {
-                return false;
-            }
-
-            var changed = session.RequestClose(invoiceStatus, DateTimeOffset.UtcNow);
-            if (!changed)
-            {
-                return false;
-            }
-
-            ApplySnapshot(sessionData!, session.Snapshot());
-            context.SaveChanges();
-            return true;
+            return false;
         }
+
+        var requestedAt = DateTimeOffset.UtcNow;
+        var changed = !sessionData.IsCloseRequested || sessionData.CloseInvoiceStatus != invoiceStatus;
+        sessionData.IsCloseRequested = true;
+        sessionData.CloseInvoiceStatus = invoiceStatus;
+        sessionData.CloseRequestedAt ??= requestedAt;
+        if (!changed)
+        {
+            return false;
+        }
+
+        sessionData.UpdatedAt = requestedAt;
+        context.SaveChanges();
+        return true;
     }
 
     public bool TryPersistContributedInput(string invoiceId, OutPoint outPoint)
     {
         ArgumentNullException.ThrowIfNull(outPoint);
-        lock (_sync)
+        using var context = _pluginDbContextFactory.CreateContext();
+        var sessionData = context.ReceiverSessions.SingleOrDefault(x => x.InvoiceId == invoiceId);
+        if (sessionData is null)
         {
-            using var context = _pluginDbContextFactory.CreateContext();
-            if (!TryLoadSessionCore(context, invoiceId, trackSession: true, out var session, out var sessionData))
-            {
-                return false;
-            }
+            return false;
+        }
 
-            session.SetContributedInput(outPoint, DateTimeOffset.UtcNow);
-            ApplySnapshot(sessionData!, session.Snapshot());
-            context.SaveChanges();
+        var transactionId = outPoint.Hash.ToString();
+        var outputIndex = checked((int)outPoint.N);
+        if (sessionData.ContributedInputTransactionId == transactionId && sessionData.ContributedInputOutputIndex == outputIndex)
+        {
             return true;
         }
+
+        sessionData.ContributedInputTransactionId = transactionId;
+        sessionData.ContributedInputOutputIndex = outputIndex;
+        sessionData.UpdatedAt = DateTimeOffset.UtcNow;
+        context.SaveChanges();
+        return true;
     }
 
     internal JsonReceiverSessionPersister CreatePersister(PayjoinReceiverSessionState session)
@@ -149,7 +158,8 @@ public sealed class PayjoinReceiverSessionStore
 
     private void AppendEvent(string invoiceId, string @event)
     {
-        lock (_sync)
+        const int maxAttempts = 3;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             using var context = _pluginDbContextFactory.CreateContext();
             var sessionData = context.ReceiverSessions.SingleOrDefault(x => x.InvoiceId == invoiceId);
@@ -174,7 +184,16 @@ public sealed class PayjoinReceiverSessionStore
                 Event = @event,
                 CreatedAt = createdAt
             });
-            context.SaveChanges();
+            try
+            {
+                context.SaveChanges();
+                return;
+            }
+            catch (DbUpdateException) when (attempt < maxAttempts)
+            {
+                // A concurrent app instance may have claimed the next sequence first.
+                // The unique (InvoiceId, Sequence) index is the durable ordering guard.
+            }
         }
     }
 
@@ -218,23 +237,9 @@ public sealed class PayjoinReceiverSessionStore
     private static bool TryLoadSessionCore(
         PayjoinPluginDbContext context,
         string invoiceId,
-        bool trackSession,
         out PayjoinReceiverSessionState session)
     {
-        return TryLoadSessionCore(context, invoiceId, trackSession, out session, out _);
-    }
-
-    private static bool TryLoadSessionCore(
-        PayjoinPluginDbContext context,
-        string invoiceId,
-        bool trackSession,
-        out PayjoinReceiverSessionState session,
-        out PayjoinReceiverSessionData? sessionData)
-    {
-        var sessionQuery = trackSession
-            ? context.ReceiverSessions
-            : context.ReceiverSessions.AsNoTracking();
-        sessionData = sessionQuery.SingleOrDefault(x => x.InvoiceId == invoiceId);
+        var sessionData = context.ReceiverSessions.AsNoTracking().SingleOrDefault(x => x.InvoiceId == invoiceId);
         if (sessionData is null)
         {
             session = null!;
@@ -257,26 +262,8 @@ public sealed class PayjoinReceiverSessionStore
 
     private string[] LoadEvents(string invoiceId)
     {
-        lock (_sync)
-        {
-            using var context = _pluginDbContextFactory.CreateContext();
-            return LoadEventsCore(context, invoiceId);
-        }
-    }
-
-    private static void ApplySnapshot(PayjoinReceiverSessionData target, PayjoinReceiverSessionSnapshot snapshot)
-    {
-        target.StoreId = snapshot.StoreId;
-        target.ReceiverAddress = snapshot.ReceiverAddress;
-        target.OhttpRelayUrl = snapshot.OhttpRelayUrl.AbsoluteUri;
-        target.MonitoringExpiresAt = snapshot.MonitoringExpiresAt;
-        target.CreatedAt = snapshot.CreatedAt;
-        target.UpdatedAt = snapshot.UpdatedAt;
-        target.IsCloseRequested = snapshot.IsCloseRequested;
-        target.CloseInvoiceStatus = snapshot.CloseInvoiceStatus;
-        target.CloseRequestedAt = snapshot.CloseRequestedAt;
-        target.ContributedInputTransactionId = snapshot.ContributedInputTransactionId;
-        target.ContributedInputOutputIndex = snapshot.ContributedInputOutputIndex;
+        using var context = _pluginDbContextFactory.CreateContext();
+        return LoadEventsCore(context, invoiceId);
     }
 
     private sealed class DatabaseBackedReceiverPersister : JsonReceiverSessionPersister
@@ -302,203 +289,3 @@ public sealed class PayjoinReceiverSessionStore
         }
     }
 }
-
-public sealed class PayjoinReceiverSessionState
-{
-    private readonly object _sync = new();
-    private readonly List<string> _events;
-    private DateTimeOffset _updatedAt;
-    private bool _isCloseRequested;
-    private InvoiceStatus? _closeInvoiceStatus;
-    private DateTimeOffset? _closeRequestedAt;
-    private string? _contributedInputTransactionId;
-    private int? _contributedInputOutputIndex;
-
-    public PayjoinReceiverSessionState(
-        string invoiceId,
-        string storeId,
-        string receiverAddress,
-        SystemUri ohttpRelayUrl,
-        DateTimeOffset monitoringExpiresAt,
-        DateTimeOffset createdAt,
-        DateTimeOffset updatedAt,
-        bool isCloseRequested = false,
-        InvoiceStatus? closeInvoiceStatus = null,
-        DateTimeOffset? closeRequestedAt = null,
-        string? contributedInputTransactionId = null,
-        int? contributedInputOutputIndex = null,
-        IEnumerable<string>? events = null)
-    {
-        InvoiceId = invoiceId;
-        StoreId = storeId;
-        ReceiverAddress = receiverAddress;
-        OhttpRelayUrl = ohttpRelayUrl;
-        MonitoringExpiresAt = monitoringExpiresAt;
-        CreatedAt = createdAt;
-        _updatedAt = updatedAt;
-        _isCloseRequested = isCloseRequested;
-        _closeInvoiceStatus = closeInvoiceStatus;
-        _closeRequestedAt = closeRequestedAt;
-        _contributedInputTransactionId = contributedInputTransactionId;
-        _contributedInputOutputIndex = contributedInputOutputIndex;
-        _events = events?.ToList() ?? [];
-    }
-
-    public string InvoiceId { get; }
-
-    public string StoreId { get; }
-
-    public string ReceiverAddress { get; }
-
-    public SystemUri OhttpRelayUrl { get; }
-
-    public DateTimeOffset MonitoringExpiresAt { get; }
-
-    public DateTimeOffset CreatedAt { get; }
-
-    public DateTimeOffset UpdatedAt
-    {
-        get
-        {
-            lock (_sync)
-            {
-                return _updatedAt;
-            }
-        }
-    }
-
-    public bool IsCloseRequested
-    {
-        get
-        {
-            lock (_sync)
-            {
-                return _isCloseRequested;
-            }
-        }
-    }
-
-    public InvoiceStatus? CloseInvoiceStatus
-    {
-        get
-        {
-            lock (_sync)
-            {
-                return _closeInvoiceStatus;
-            }
-        }
-    }
-
-    public bool TryGetContributedInput(out OutPoint outPoint)
-    {
-        lock (_sync)
-        {
-            outPoint = default!;
-
-            if (string.IsNullOrWhiteSpace(_contributedInputTransactionId) || !_contributedInputOutputIndex.HasValue)
-            {
-                return false;
-            }
-
-            try
-            {
-                outPoint = new OutPoint(uint256.Parse(_contributedInputTransactionId), checked((uint)_contributedInputOutputIndex.Value));
-                return true;
-            }
-            catch (FormatException)
-            {
-                return false;
-            }
-            catch (OverflowException)
-            {
-                return false;
-            }
-        }
-    }
-
-    internal int AddEvent(string @event, DateTimeOffset createdAt)
-    {
-        lock (_sync)
-        {
-            _events.Add(@event);
-            _updatedAt = createdAt;
-            return _events.Count;
-        }
-    }
-
-    internal string[] GetEvents()
-    {
-        lock (_sync)
-        {
-            return _events.ToArray();
-        }
-    }
-
-    internal bool RequestClose(InvoiceStatus invoiceStatus, DateTimeOffset requestedAt)
-    {
-        lock (_sync)
-        {
-            var changed = !_isCloseRequested || _closeInvoiceStatus != invoiceStatus;
-            _isCloseRequested = true;
-            _closeInvoiceStatus = invoiceStatus;
-            _closeRequestedAt ??= requestedAt;
-            if (changed)
-            {
-                _updatedAt = requestedAt;
-            }
-
-            return changed;
-        }
-    }
-
-    internal void SetContributedInput(OutPoint outPoint, DateTimeOffset updatedAt)
-    {
-        lock (_sync)
-        {
-            var transactionId = outPoint.Hash.ToString();
-            var outputIndex = checked((int)outPoint.N);
-            if (_contributedInputTransactionId == transactionId && _contributedInputOutputIndex == outputIndex)
-            {
-                return;
-            }
-
-            _contributedInputTransactionId = transactionId;
-            _contributedInputOutputIndex = outputIndex;
-            _updatedAt = updatedAt;
-        }
-    }
-
-    internal PayjoinReceiverSessionSnapshot Snapshot()
-    {
-        lock (_sync)
-        {
-            return new PayjoinReceiverSessionSnapshot(
-                InvoiceId,
-                StoreId,
-                ReceiverAddress,
-                OhttpRelayUrl,
-                MonitoringExpiresAt,
-                CreatedAt,
-                _updatedAt,
-                _isCloseRequested,
-                _closeInvoiceStatus,
-                _closeRequestedAt,
-                _contributedInputTransactionId,
-                _contributedInputOutputIndex);
-        }
-    }
-}
-
-internal sealed record PayjoinReceiverSessionSnapshot(
-    string InvoiceId,
-    string StoreId,
-    string ReceiverAddress,
-    SystemUri OhttpRelayUrl,
-    DateTimeOffset MonitoringExpiresAt,
-    DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt,
-    bool IsCloseRequested,
-    InvoiceStatus? CloseInvoiceStatus,
-    DateTimeOffset? CloseRequestedAt,
-    string? ContributedInputTransactionId,
-    int? ContributedInputOutputIndex);

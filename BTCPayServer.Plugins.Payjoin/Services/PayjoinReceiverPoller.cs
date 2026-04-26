@@ -253,10 +253,10 @@ public sealed class PayjoinReceiverPoller : BackgroundService
 
         if (invoice.GetInvoiceState().Status != InvoiceStatus.New)
         {
-            if (_sessionStore.RequestClose(session.InvoiceId, invoice.GetInvoiceState().Status))
-            {
-                session.RequestClose(invoice.GetInvoiceState().Status, DateTimeOffset.UtcNow);
-            }
+            var status = invoice.GetInvoiceState().Status;
+            _sessionStore.RequestClose(session.InvoiceId, status);
+            RemoveSession(session.InvoiceId, $"invoice is no longer payable ({status})");
+            return false;
         }
 
         return true;
