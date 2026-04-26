@@ -65,9 +65,38 @@ These items are complete enough that they should not be reopened without a concr
 
 ## Ordered Remaining Work
 
-The remaining blocker is not architecture anymore. It is live validation of the combined path on `chavic/checkout-model-seam`.
+The immediate focus is the session-persistence review branch, `chavic/persist-receiver-sessions`.
 
-Receiver-session orchestration in `PayjoinReceiverPoller` is still too fragile beyond single test purchases because session handling remains sequential. This should be treated as a blocker in the active work.
+Before treating that branch as ready to merge, address the review feedback around receiver-session state ownership:
+
+- replace or justify the global `_sync` lock in `PayjoinReceiverSessionStore`
+- avoid memory-first/session-object mutation patterns where DB writes can fail afterward
+- prefer database-authoritative operations for session snapshots and event appends
+- make event sequencing safe without relying on a process-local monitor lock
+- keep the current `PayjoinReceiverSessionState` either immutable/snapshot-only or clearly scoped as a detached DTO
+
+Add this error report to the active review queue:
+
+- invoice `4nXwoDoyLyDnNcmMFGkUrW` repeatedly logged `Payjoin receiver polling failed` while still in `Initialized`
+- the failing path is `PayjoinReceiverPoller.ExecuteAsync` -> `ProcessSessionAsync` -> `PollInitializedAsync` -> `HttpClient.SendAsync`
+- the thrown exception is `TaskCanceledException` with inner transport/socket cancellation while reading the OHTTP relay response
+- this is not the earlier self-pay or input-contribution failure; it happens before any sender proposal is processed
+
+Likely root-cause story from code inspection:
+
+- `PollInitializedAsync` uses a hard local `RelayRequestTimeout` of 10 seconds for the receiver's OHTTP poll request
+- initialized receiver polling is expected to long-poll while no sender proposal exists, so an idle relay response can be canceled locally and then retried on the next 5-second poller tick
+- the catch block logs every `TaskCanceledException` as a warning, so a normal "no proposal yet" or slow relay read can look like repeated operational failure
+- the same 10-second timeout is also used by `SendRelayRequestAsync` for non-poll relay requests, so poll requests and normal post/error/proposal requests are not distinguished
+- payjoin-cli's v2 receiver/sender flow loops on long-poll stasis instead of treating each no-response interval as a warning-level failure, so the plugin likely needs a dedicated initialized-poll timeout policy and calmer logging
+
+Proposed fix direction:
+
+- separate initialized long-poll timeout handling from ordinary relay POST timeout handling
+- classify local initialized-poll timeouts as expected stasis or debug-level diagnostics unless BTCPay is stopping
+- include request URL/content type and timeout duration in diagnostics without dumping noisy stack traces on every idle tick
+- add a regression test with a fake `HttpMessageHandler` that times out an initialized poll and verifies the session remains active without warning-level failure semantics
+- keep terminal/removal behavior for real replay, invalid-operation, invoice-state, or uniffi failures
 
 ### 1. Prepare The Local Test Environment
 
