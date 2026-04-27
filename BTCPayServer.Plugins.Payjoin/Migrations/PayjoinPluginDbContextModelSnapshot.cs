@@ -48,6 +48,9 @@ namespace BTCPayServer.Plugins.Payjoin.Migrations
                     b.Property<bool>("IsCloseRequested")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("InitializedPollAfterCloseRequestConsumed")
+                        .HasColumnType("boolean");
+
                     b.Property<DateTimeOffset>("MonitoringExpiresAt")
                         .HasColumnType("timestamp with time zone");
 

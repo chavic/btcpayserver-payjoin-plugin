@@ -26,6 +26,8 @@ internal class PayjoinReceiverSessionData
 
     public DateTimeOffset? CloseRequestedAt { get; set; }
 
+    public bool InitializedPollAfterCloseRequestConsumed { get; set; }
+
     public string? ContributedInputTransactionId { get; set; }
 
     public int? ContributedInputOutputIndex { get; set; }

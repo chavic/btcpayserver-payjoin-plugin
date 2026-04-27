@@ -464,8 +464,8 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
                 new Uri(bip21Response.Bip21, UriKind.Absolute),
                 cts.Token)).ConfigureAwait(true);
 
-        // TODO: Replace this timeout assertion with a fast receiver rejection assertion once the payjoin library supports closing an in-flight session cleanly.
-        Assert.Contains("timed out", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("rejected", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("timed out", exception.Message, StringComparison.OrdinalIgnoreCase);
         await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
     }
 
@@ -501,8 +501,8 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
                 new Uri(bip21Response.Bip21, UriKind.Absolute),
                 cts.Token)).ConfigureAwait(true);
 
-        // TODO: Replace this timeout assertion with a fast receiver rejection assertion once the payjoin library supports closing an in-flight session cleanly.
-        Assert.Contains("timed out", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("rejected", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("timed out", exception.Message, StringComparison.OrdinalIgnoreCase);
         await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
     }
 
@@ -540,8 +540,8 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
                 new Uri(bip21Response.Bip21, UriKind.Absolute),
                 cts.Token)).ConfigureAwait(true);
 
-        // TODO: Replace this timeout assertion with a fast receiver rejection assertion once the payjoin library supports closing an in-flight session cleanly.
-        Assert.Contains("timed out", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("rejected", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("timed out", exception.Message, StringComparison.OrdinalIgnoreCase);
         await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
     }
 

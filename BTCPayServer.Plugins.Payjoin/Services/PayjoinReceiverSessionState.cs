@@ -22,6 +22,7 @@ public sealed class PayjoinReceiverSessionState
         bool isCloseRequested = false,
         InvoiceStatus? closeInvoiceStatus = null,
         DateTimeOffset? closeRequestedAt = null,
+        bool initializedPollAfterCloseRequestConsumed = false,
         string? contributedInputTransactionId = null,
         int? contributedInputOutputIndex = null,
         IEnumerable<string>? events = null)
@@ -36,6 +37,7 @@ public sealed class PayjoinReceiverSessionState
         IsCloseRequested = isCloseRequested;
         CloseInvoiceStatus = closeInvoiceStatus;
         CloseRequestedAt = closeRequestedAt;
+        InitializedPollAfterCloseRequestConsumed = initializedPollAfterCloseRequestConsumed;
         ContributedInputTransactionId = contributedInputTransactionId;
         ContributedInputOutputIndex = contributedInputOutputIndex;
         _events = events?.ToArray() ?? [];
@@ -61,9 +63,16 @@ public sealed class PayjoinReceiverSessionState
 
     public DateTimeOffset? CloseRequestedAt { get; }
 
+    public bool InitializedPollAfterCloseRequestConsumed { get; }
+
     public string? ContributedInputTransactionId { get; }
 
     public int? ContributedInputOutputIndex { get; }
+
+    internal bool CanPollInitializedAfterCloseRequest()
+    {
+        return IsCloseRequested && !InitializedPollAfterCloseRequestConsumed;
+    }
 
     public bool TryGetContributedInput(out OutPoint outPoint)
     {

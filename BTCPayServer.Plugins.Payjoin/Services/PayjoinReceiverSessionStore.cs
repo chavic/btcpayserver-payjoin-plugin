@@ -116,12 +116,33 @@ public sealed class PayjoinReceiverSessionStore
         sessionData.IsCloseRequested = true;
         sessionData.CloseInvoiceStatus = invoiceStatus;
         sessionData.CloseRequestedAt ??= requestedAt;
+        if (changed)
+        {
+            sessionData.InitializedPollAfterCloseRequestConsumed = false;
+        }
         if (!changed)
         {
             return false;
         }
 
         sessionData.UpdatedAt = requestedAt;
+        context.SaveChanges();
+        return true;
+    }
+
+    public bool TryConsumeInitializedPollAfterCloseRequest(string invoiceId)
+    {
+        using var context = _pluginDbContextFactory.CreateContext();
+        var sessionData = context.ReceiverSessions.SingleOrDefault(x => x.InvoiceId == invoiceId);
+        if (sessionData is null ||
+            !sessionData.IsCloseRequested ||
+            sessionData.InitializedPollAfterCloseRequestConsumed)
+        {
+            return false;
+        }
+
+        sessionData.InitializedPollAfterCloseRequestConsumed = true;
+        sessionData.UpdatedAt = DateTimeOffset.UtcNow;
         context.SaveChanges();
         return true;
     }
@@ -210,6 +231,7 @@ public sealed class PayjoinReceiverSessionStore
             sessionData.IsCloseRequested,
             sessionData.CloseInvoiceStatus,
             sessionData.CloseRequestedAt,
+            sessionData.InitializedPollAfterCloseRequestConsumed,
             sessionData.ContributedInputTransactionId,
             sessionData.ContributedInputOutputIndex,
             events ?? []);

@@ -1,3 +1,4 @@
+using BTCPayServer.Client.Models;
 using BTCPayServer.Abstractions.Models;
 using BTCPayServer.Plugins.Payjoin;
 using BTCPayServer.Plugins.Payjoin.Services;
@@ -144,6 +145,30 @@ public class PayjoinReceiverSessionStoreTests
         using var context = testContext.CreateDbContext();
         Assert.Empty(context.ReceiverSessions);
         Assert.Empty(context.ReceiverSessionEvents);
+    }
+
+    [Fact]
+    public void CloseRequestedInitializedPollConsumptionPersistsThroughFreshStoreInstance()
+    {
+        using var testContext = new TestContext();
+        var store = testContext.CreateStore();
+        var session = CreateSession(store, "invoice-close", out _);
+
+        Assert.True(store.RequestClose(session.InvoiceId, InvoiceStatus.Expired));
+
+        var closeRequestedStore = testContext.CreateStore();
+        Assert.True(closeRequestedStore.TryGetSession(session.InvoiceId, out var closeRequestedSession));
+        Assert.True(closeRequestedSession!.IsCloseRequested);
+        Assert.Equal(InvoiceStatus.Expired, closeRequestedSession.CloseInvoiceStatus);
+        Assert.True(closeRequestedSession.CanPollInitializedAfterCloseRequest());
+
+        Assert.True(closeRequestedStore.TryConsumeInitializedPollAfterCloseRequest(session.InvoiceId));
+
+        var consumedStore = testContext.CreateStore();
+        Assert.True(consumedStore.TryGetSession(session.InvoiceId, out var consumedSession));
+        Assert.True(consumedSession!.InitializedPollAfterCloseRequestConsumed);
+        Assert.False(consumedSession.CanPollInitializedAfterCloseRequest());
+        Assert.False(consumedStore.TryConsumeInitializedPollAfterCloseRequest(session.InvoiceId));
     }
 
     private static PayjoinReceiverSessionState CreateSession(PayjoinReceiverSessionStore store, string invoiceId, out bool created)

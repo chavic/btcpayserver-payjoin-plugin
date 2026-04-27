@@ -15,6 +15,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
 using SystemUri = System.Uri;
@@ -138,10 +139,12 @@ public sealed class PayjoinReceiverPoller : BackgroundService
 
     private async Task ProcessSessionAsync(PayjoinReceiverSessionState session, CancellationToken stoppingToken)
     {
-        if (!await RefreshInvoiceCloseStateAsync(session).ConfigureAwait(false))
+        var refreshedSession = await RefreshInvoiceCloseStateAsync(session).ConfigureAwait(false);
+        if (refreshedSession is null)
         {
             return;
         }
+        session = refreshedSession;
 
         if (!TryGetReceiverScript(session, out var receiverScript))
         {
@@ -176,23 +179,21 @@ public sealed class PayjoinReceiverPoller : BackgroundService
             return;
         }
 
-        if (session.IsCloseRequested)
+        if (TryRemoveCloseRequestedSession(session, state))
         {
-            // TODO: Send a persisted replyable receiver rejection here after the payjoin library supports closing an in-flight session cleanly.
-            RemoveSession(session.InvoiceId, $"invoice is no longer payable ({session.CloseInvoiceStatus})");
             return;
         }
 
         switch (state)
         {
             case ReceiveSession.Initialized initialized:
-                await PollInitializedAsync(initialized.inner, persister, receiverScript, session.OhttpRelayUrl, session.StoreId, session.InvoiceId, stoppingToken).ConfigureAwait(false);
+                await PollInitializedAsync(session, initialized.inner, persister, receiverScript, session.OhttpRelayUrl, session.StoreId, session.InvoiceId, stoppingToken).ConfigureAwait(false);
                 break;
             case ReceiveSession.HasReplyableError hasReplyableError:
                 await ProcessReplyableErrorAsync(hasReplyableError.inner, persister, session.OhttpRelayUrl, stoppingToken).ConfigureAwait(false);
                 break;
             case ReceiveSession.UncheckedOriginalPayload payload:
-                await ProcessUncheckedProposalAsync(payload.inner, persister, receiverScript, session.OhttpRelayUrl, session.StoreId, session.InvoiceId, stoppingToken).ConfigureAwait(false);
+                await ProcessUncheckedProposalAsync(session, payload.inner, persister, receiverScript, session.OhttpRelayUrl, session.StoreId, session.InvoiceId, stoppingToken).ConfigureAwait(false);
                 break;
             case ReceiveSession.MaybeInputsOwned maybeInputsOwned:
                 await ProcessMaybeInputsOwnedAsync(maybeInputsOwned.inner, persister, receiverScript, session.OhttpRelayUrl, session.StoreId, session.InvoiceId, stoppingToken).ConfigureAwait(false);
@@ -242,24 +243,25 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         }
     }
 
-    private async Task<bool> RefreshInvoiceCloseStateAsync(PayjoinReceiverSessionState session)
+    private async Task<PayjoinReceiverSessionState?> RefreshInvoiceCloseStateAsync(PayjoinReceiverSessionState session)
     {
         var invoice = await _invoiceRepository.GetInvoice(session.InvoiceId).ConfigureAwait(false);
         if (invoice is null)
         {
             RemoveSession(session.InvoiceId, "invoice no longer exists");
-            return false;
+            return null;
         }
 
         if (invoice.GetInvoiceState().Status != InvoiceStatus.New)
         {
             var status = invoice.GetInvoiceState().Status;
             _sessionStore.RequestClose(session.InvoiceId, status);
-            RemoveSession(session.InvoiceId, $"invoice is no longer payable ({status})");
-            return false;
+            return _sessionStore.TryGetSession(session.InvoiceId, out var closeRequestedSession)
+                ? closeRequestedSession
+                : null;
         }
 
-        return true;
+        return session;
     }
 
     private bool TryExpireSession(PayjoinReceiverSessionState session)
@@ -290,7 +292,38 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         return true;
     }
 
+    private bool TryRemoveCloseRequestedSession(PayjoinReceiverSessionState session, ReceiveSession state)
+    {
+        if (!session.IsCloseRequested)
+        {
+            return false;
+        }
+
+        if (StateCanStillReplyAfterCloseRequest(session, state))
+        {
+            return false;
+        }
+
+        return RemoveCloseRequestedSession(session);
+    }
+
+    private static bool StateCanStillReplyAfterCloseRequest(PayjoinReceiverSessionState session, ReceiveSession state)
+    {
+        if (state is ReceiveSession.UncheckedOriginalPayload or ReceiveSession.HasReplyableError)
+        {
+            return true;
+        }
+
+        return state is ReceiveSession.Initialized && session.CanPollInitializedAfterCloseRequest();
+    }
+
+    private bool RemoveCloseRequestedSession(PayjoinReceiverSessionState session)
+    {
+        return RemoveSession(session.InvoiceId, $"invoice is no longer payable ({session.CloseInvoiceStatus})");
+    }
+
     private async Task PollInitializedAsync(
+        PayjoinReceiverSessionState session,
         Initialized initialized,
         JsonReceiverSessionPersister persister,
         byte[] receiverScript,
@@ -299,6 +332,11 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         string invoiceId,
         CancellationToken stoppingToken)
     {
+        if (session.IsCloseRequested)
+        {
+            _sessionStore.TryConsumeInitializedPollAfterCloseRequest(session.InvoiceId);
+        }
+
         using var requestResponse = initialized.CreatePollRequest(ohttpRelayUrl.ToString());
         var request = requestResponse.request;
 
@@ -319,11 +357,12 @@ public sealed class PayjoinReceiverPoller : BackgroundService
 
         if (outcome is InitializedTransitionOutcome.Progress progress)
         {
-            await ProcessUncheckedProposalAsync(progress.inner, persister, receiverScript, ohttpRelayUrl, storeId, invoiceId, stoppingToken).ConfigureAwait(false);
+            await ProcessUncheckedProposalAsync(session, progress.inner, persister, receiverScript, ohttpRelayUrl, storeId, invoiceId, stoppingToken).ConfigureAwait(false);
         }
     }
 
     private async Task ProcessUncheckedProposalAsync(
+        PayjoinReceiverSessionState session,
         UncheckedOriginalPayload proposal,
         JsonReceiverSessionPersister persister,
         byte[] receiverScript,
@@ -332,9 +371,77 @@ public sealed class PayjoinReceiverPoller : BackgroundService
         string invoiceId,
         CancellationToken stoppingToken)
     {
+        if (session.IsCloseRequested)
+        {
+            if (await TryRejectCloseRequestedOriginalPayloadAsync(session, proposal, persister, ohttpRelayUrl, stoppingToken).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            RemoveCloseRequestedSession(session);
+            return;
+        }
+
         using var transition = proposal.AssumeInteractiveReceiver();
         using var maybeInputsOwned = transition.Save(persister);
         await ProcessMaybeInputsOwnedAsync(maybeInputsOwned, persister, receiverScript, ohttpRelayUrl, storeId, invoiceId, stoppingToken).ConfigureAwait(false);
+    }
+
+    private async Task<bool> TryRejectCloseRequestedOriginalPayloadAsync(
+        PayjoinReceiverSessionState session,
+        UncheckedOriginalPayload proposal,
+        JsonReceiverSessionPersister persister,
+        SystemUri ohttpRelayUrl,
+        CancellationToken stoppingToken)
+    {
+        // TODO: Replace this close-request workaround with a direct rust-payjoin/payjoin-ffi API for
+        // creating a replyable receiver rejection from the current session state. The current bindings
+        // do not expose persisted `error_state()` or an explicit `Unavailable`/session-closed reject path,
+        // so we temporarily route invoice-closed sessions through `CheckBroadcastSuitability`.
+        using var rejectionTransition = proposal.CheckBroadcastSuitability(null, new CloseRequestedBroadcastGuard(session));
+
+        try
+        {
+            using var _ = rejectionTransition.Save(persister);
+            return false;
+        }
+        catch (ReceiverPersistedException ex)
+        {
+            if (await TryPostPersistedReplyableErrorAsync(persister, ohttpRelayUrl, stoppingToken).ConfigureAwait(false))
+            {
+                return true;
+            }
+
+            ExceptionDispatchInfo.Capture(ex).Throw();
+            throw;
+        }
+    }
+
+    private async Task<bool> TryPostPersistedReplyableErrorAsync(
+        JsonReceiverSessionPersister persister,
+        SystemUri ohttpRelayUrl,
+        CancellationToken stoppingToken)
+    {
+        ReplayResult replay;
+        try
+        {
+            replay = PayjoinMethods.ReplayReceiverEventLog(persister);
+        }
+        catch (ReceiverReplayException)
+        {
+            return false;
+        }
+
+        using var replayScope = replay;
+        using var replayState = replayScope.State();
+
+        if (replayState is not ReceiveSession.HasReplyableError hasReplyableError)
+        {
+            return false;
+        }
+
+        await ProcessReplyableErrorAsync(hasReplyableError.inner, persister, ohttpRelayUrl, stoppingToken).ConfigureAwait(false);
+        return true;
     }
 
     private async Task ProcessReplyableErrorAsync(
@@ -901,6 +1008,18 @@ public sealed class PayjoinReceiverPoller : BackgroundService
     private sealed class NoInputsSeenCallback : IsOutputKnown
     {
         public bool Callback(PlainOutPoint _outpoint) => false;
+    }
+
+    private sealed class CloseRequestedBroadcastGuard : CanBroadcast
+    {
+        private readonly PayjoinReceiverSessionState _session;
+
+        public CloseRequestedBroadcastGuard(PayjoinReceiverSessionState session)
+        {
+            _session = session;
+        }
+
+        public bool Callback(byte[] _tx) => !_session.IsCloseRequested;
     }
 
     private sealed class SigningProcessPsbt : ProcessPsbt

@@ -1,4 +1,5 @@
 using BTCPayServer.Plugins.Payjoin.Services;
+using BTCPayServer.Client.Models;
 using NBitcoin;
 using System;
 using Xunit;
@@ -39,6 +40,23 @@ public class PayjoinReceiverSessionStateTests
     }
 
     [Fact]
+    public void InitializedPollAfterCloseRequestIsAvailableUntilConsumed()
+    {
+        var closeRequested = CreateSession(
+            isCloseRequested: true,
+            closeInvoiceStatus: InvoiceStatus.Expired,
+            closeRequestedAt: DateTimeOffset.UtcNow);
+        var consumed = CreateSession(
+            isCloseRequested: true,
+            closeInvoiceStatus: InvoiceStatus.Expired,
+            closeRequestedAt: DateTimeOffset.UtcNow,
+            initializedPollAfterCloseRequestConsumed: true);
+
+        Assert.True(closeRequested.CanPollInitializedAfterCloseRequest());
+        Assert.False(consumed.CanPollInitializedAfterCloseRequest());
+    }
+
+    [Fact]
     public void InvalidPersistedContributedInputMetadataIsIgnored()
     {
         var now = DateTimeOffset.UtcNow;
@@ -58,6 +76,10 @@ public class PayjoinReceiverSessionStateTests
 
     private static PayjoinReceiverSessionState CreateSession(
         DateTimeOffset? updatedAt = null,
+        bool isCloseRequested = false,
+        InvoiceStatus? closeInvoiceStatus = null,
+        DateTimeOffset? closeRequestedAt = null,
+        bool initializedPollAfterCloseRequestConsumed = false,
         string? contributedInputTransactionId = null,
         int? contributedInputOutputIndex = null,
         string[]? events = null)
@@ -71,6 +93,10 @@ public class PayjoinReceiverSessionStateTests
             now.AddMinutes(5),
             now,
             updatedAt ?? now,
+            isCloseRequested,
+            closeInvoiceStatus,
+            closeRequestedAt,
+            initializedPollAfterCloseRequestConsumed,
             contributedInputTransactionId: contributedInputTransactionId,
             contributedInputOutputIndex: contributedInputOutputIndex,
             events: events);
