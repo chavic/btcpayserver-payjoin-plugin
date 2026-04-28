@@ -22,7 +22,19 @@ public class PayjoinReceiverSessionStateTests
         var contributedOutPoint = new OutPoint(uint256.Parse("1111111111111111111111111111111111111111111111111111111111111111"), 1);
         var session = CreateSession(
             contributedInputTransactionId: contributedOutPoint.Hash.ToString(),
-            contributedInputOutputIndex: checked((int)contributedOutPoint.N));
+            contributedInputOutputIndex: checked((long)contributedOutPoint.N));
+
+        Assert.True(session.TryGetContributedInput(out var restoredOutPoint));
+        Assert.Equal(contributedOutPoint, restoredOutPoint);
+    }
+
+    [Fact]
+    public void ContributedInputRestoresMaximumOutputIndex()
+    {
+        var contributedOutPoint = new OutPoint(uint256.Parse("2222222222222222222222222222222222222222222222222222222222222222"), uint.MaxValue);
+        var session = CreateSession(
+            contributedInputTransactionId: contributedOutPoint.Hash.ToString(),
+            contributedInputOutputIndex: contributedOutPoint.N);
 
         Assert.True(session.TryGetContributedInput(out var restoredOutPoint));
         Assert.Equal(contributedOutPoint, restoredOutPoint);
@@ -81,7 +93,7 @@ public class PayjoinReceiverSessionStateTests
         DateTimeOffset? closeRequestedAt = null,
         bool initializedPollAfterCloseRequestConsumed = false,
         string? contributedInputTransactionId = null,
-        int? contributedInputOutputIndex = null,
+        long? contributedInputOutputIndex = null,
         string[]? events = null)
     {
         var now = DateTimeOffset.UtcNow;

@@ -35,8 +35,8 @@ namespace BTCPayServer.Plugins.Payjoin.Migrations
                     b.Property<DateTimeOffset?>("CloseRequestedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int?>("ContributedInputOutputIndex")
-                        .HasColumnType("integer");
+                    b.Property<long?>("ContributedInputOutputIndex")
+                        .HasColumnType("bigint");
 
                     b.Property<string>("ContributedInputTransactionId")
                         .HasMaxLength(PayjoinPluginDbSchema.TransactionIdMaxLength)

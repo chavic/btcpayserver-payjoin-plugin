@@ -158,7 +158,7 @@ public sealed class PayjoinReceiverSessionStore
         }
 
         var transactionId = outPoint.Hash.ToString();
-        var outputIndex = checked((int)outPoint.N);
+        var outputIndex = checked((long)outPoint.N);
         if (sessionData.ContributedInputTransactionId == transactionId && sessionData.ContributedInputOutputIndex == outputIndex)
         {
             return true;

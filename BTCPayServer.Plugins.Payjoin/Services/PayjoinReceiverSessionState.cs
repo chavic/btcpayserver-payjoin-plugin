@@ -24,7 +24,7 @@ public sealed class PayjoinReceiverSessionState
         DateTimeOffset? closeRequestedAt = null,
         bool initializedPollAfterCloseRequestConsumed = false,
         string? contributedInputTransactionId = null,
-        int? contributedInputOutputIndex = null,
+        long? contributedInputOutputIndex = null,
         IEnumerable<string>? events = null)
     {
         InvoiceId = invoiceId;
@@ -67,7 +67,7 @@ public sealed class PayjoinReceiverSessionState
 
     public string? ContributedInputTransactionId { get; }
 
-    public int? ContributedInputOutputIndex { get; }
+    public long? ContributedInputOutputIndex { get; }
 
     internal bool CanPollInitializedAfterCloseRequest()
     {

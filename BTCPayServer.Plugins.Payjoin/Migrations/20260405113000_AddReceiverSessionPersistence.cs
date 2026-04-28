@@ -31,7 +31,7 @@ namespace BTCPayServer.Plugins.Payjoin.Migrations
                     CloseRequestedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
                     InitializedPollAfterCloseRequestConsumed = table.Column<bool>(type: "boolean", nullable: false),
                     ContributedInputTransactionId = table.Column<string>(type: "character varying(64)", maxLength: PayjoinPluginDbSchema.TransactionIdMaxLength, nullable: true),
-                    ContributedInputOutputIndex = table.Column<int>(type: "integer", nullable: true)
+                    ContributedInputOutputIndex = table.Column<long>(type: "bigint", nullable: true)
                 },
                 constraints: table =>
                 {

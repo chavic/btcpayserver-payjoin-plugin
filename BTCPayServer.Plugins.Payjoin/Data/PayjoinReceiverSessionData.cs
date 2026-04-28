@@ -30,7 +30,7 @@ internal class PayjoinReceiverSessionData
 
     public string? ContributedInputTransactionId { get; set; }
 
-    public int? ContributedInputOutputIndex { get; set; }
+    public long? ContributedInputOutputIndex { get; set; }
 
     public ICollection<PayjoinReceiverSessionEventData> Events { get; } = [];
 }

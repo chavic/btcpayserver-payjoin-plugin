@@ -73,7 +73,7 @@ public class PayjoinReceiverSessionStoreTests
         using var testContext = new TestContext();
         var store = testContext.CreateStore();
         var session = CreateSession(store, "invoice-input", out _);
-        var expectedOutPoint = new OutPoint(uint256.Parse("1111111111111111111111111111111111111111111111111111111111111111"), 1);
+        var expectedOutPoint = new OutPoint(uint256.Parse("1111111111111111111111111111111111111111111111111111111111111111"), uint.MaxValue);
 
         Assert.True(store.TryPersistContributedInput(session.InvoiceId, expectedOutPoint));
 
