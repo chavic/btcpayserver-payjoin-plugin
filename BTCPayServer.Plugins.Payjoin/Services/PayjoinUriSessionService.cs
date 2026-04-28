@@ -2,7 +2,6 @@ using BTCPayServer.Plugins.Payjoin.Models;
 using Microsoft.Extensions.Logging;
 using NBitcoin;
 using System;
-using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Payjoin;
@@ -36,21 +35,22 @@ public sealed class PayjoinUriSessionService
     private readonly PayjoinReceiverSessionStore _receiverSessionStore;
     private readonly PayjoinOhttpKeysProvider _ohttpKeysProvider;
     private readonly PayjoinAvailabilityService _availabilityService;
+    private readonly PayjoinSessionBuildLock _sessionBuildLock;
     private readonly ILogger<PayjoinUriSessionService> _logger;
-    private readonly Dictionary<string, SessionBuildLock> _sessionBuildLocks = new(StringComparer.Ordinal);
-    private readonly object _sessionBuildLocksSync = new();
 
     public PayjoinUriSessionService(
         BTCPayNetworkProvider networkProvider,
         PayjoinReceiverSessionStore receiverSessionStore,
         PayjoinOhttpKeysProvider ohttpKeysProvider,
         PayjoinAvailabilityService availabilityService,
+        PayjoinSessionBuildLock sessionBuildLock,
         ILogger<PayjoinUriSessionService> logger)
     {
         _networkProvider = networkProvider;
         _receiverSessionStore = receiverSessionStore;
         _ohttpKeysProvider = ohttpKeysProvider;
         _availabilityService = availabilityService;
+        _sessionBuildLock = sessionBuildLock;
         _logger = logger;
     }
 
@@ -115,7 +115,7 @@ public sealed class PayjoinUriSessionService
 
         try
         {
-            using var sessionBuildLock = await AcquireSessionBuildLockAsync(invoiceId, cancellationToken).ConfigureAwait(false);
+            using var sessionBuildLock = await _sessionBuildLock.AcquireAsync(invoiceId, cancellationToken).ConfigureAwait(false);
             var session = _receiverSessionStore.CreateSession(
                 invoiceId,
                 destination,
@@ -168,52 +168,6 @@ public sealed class PayjoinUriSessionService
         }
     }
 
-    private async Task<SessionBuildLockLease> AcquireSessionBuildLockAsync(string invoiceId, CancellationToken cancellationToken)
-    {
-        SessionBuildLock sessionBuildLock;
-        lock (_sessionBuildLocksSync)
-        {
-            if (!_sessionBuildLocks.TryGetValue(invoiceId, out sessionBuildLock!))
-            {
-                sessionBuildLock = new SessionBuildLock();
-                _sessionBuildLocks.Add(invoiceId, sessionBuildLock);
-            }
-
-            sessionBuildLock.ReferenceCount++;
-        }
-
-        try
-        {
-            await sessionBuildLock.Semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-            return new SessionBuildLockLease(this, invoiceId, sessionBuildLock);
-        }
-        catch
-        {
-            ReleaseSessionBuildLockReference(invoiceId, sessionBuildLock);
-            throw;
-        }
-    }
-
-    private void ReleaseSessionBuildLock(string invoiceId, SessionBuildLock sessionBuildLock)
-    {
-        sessionBuildLock.Semaphore.Release();
-        ReleaseSessionBuildLockReference(invoiceId, sessionBuildLock);
-    }
-
-    private void ReleaseSessionBuildLockReference(string invoiceId, SessionBuildLock sessionBuildLock)
-    {
-        lock (_sessionBuildLocksSync)
-        {
-            sessionBuildLock.ReferenceCount--;
-            if (sessionBuildLock.ReferenceCount == 0 &&
-                _sessionBuildLocks.TryGetValue(invoiceId, out var current) &&
-                ReferenceEquals(current, sessionBuildLock))
-            {
-                _sessionBuildLocks.Remove(invoiceId);
-            }
-        }
-    }
-
     private static void InitializeSession(
         string destination,
         decimal due,
@@ -238,38 +192,5 @@ public sealed class PayjoinUriSessionService
     {
         LogUnexpectedPayjoinFallback(_logger, invoiceId, reason, null);
         return bip21;
-    }
-
-    private sealed class SessionBuildLock
-    {
-        public SemaphoreSlim Semaphore { get; } = new(1, 1);
-
-        public int ReferenceCount { get; set; }
-    }
-
-    private sealed class SessionBuildLockLease : IDisposable
-    {
-        private readonly PayjoinUriSessionService _owner;
-        private readonly string _invoiceId;
-        private readonly SessionBuildLock _sessionBuildLock;
-        private bool _disposed;
-
-        public SessionBuildLockLease(PayjoinUriSessionService owner, string invoiceId, SessionBuildLock sessionBuildLock)
-        {
-            _owner = owner;
-            _invoiceId = invoiceId;
-            _sessionBuildLock = sessionBuildLock;
-        }
-
-        public void Dispose()
-        {
-            if (_disposed)
-            {
-                return;
-            }
-
-            _disposed = true;
-            _owner.ReleaseSessionBuildLock(_invoiceId, _sessionBuildLock);
-        }
     }
 }
