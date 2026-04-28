@@ -52,7 +52,7 @@ internal static class PayjoinReceiverTestHelper
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (sessionStore.TryGetSession(invoiceId, out var session) && session is not null && session.GetContributedInputs().Length > 0)
+            if (sessionStore.TryGetSession(invoiceId, out var session) && session is not null && session.TryGetContributedInput(out _))
             {
                 return;
             }

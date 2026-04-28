@@ -4,6 +4,7 @@ using BTCPayServer.Plugins.Payjoin.Services;
 using BTCPayServer.Services.Invoices;
 using BTCPayServer.Tests;
 using NBitcoin;
+using NBitpayClient;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -65,7 +66,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         await Task.Delay(delay, cts.Token).ConfigureAwait(true);
 
         var session = PayjoinReceiverTestHelper.GetRequiredReceiverSession(tester, invoiceId);
-        Assert.NotEmpty(session.GetContributedInputs());
+        Assert.True(session.TryGetContributedInput(out _));
 
         var transactionId = await paymentTask.ConfigureAwait(true);
         Assert.False(string.IsNullOrWhiteSpace(transactionId));
