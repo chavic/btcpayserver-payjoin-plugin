@@ -1,9 +1,10 @@
+using BTCPayServer.Client.Models;
 using BTCPayServer.Plugins.Payjoin.IntegrationTests.TestUtils;
 using BTCPayServer.Plugins.Payjoin.Services;
-using BTCPayServer.Client.Models;
 using BTCPayServer.Services.Invoices;
 using BTCPayServer.Tests;
 using NBitcoin;
+using NBitpayClient;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -24,8 +25,8 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
         using var tester = CreateServerTester(newDb: true);
-        var context = await PayjoinIntegrationTestSupport.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
-        var payer = await PayjoinIntegrationTestSupport.CreateInitializedAccountAsync(tester, context.Network, cancellationToken: cts.Token).ConfigureAwait(true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+        var payer = await PayjoinAccountTestHelper.CreateInitializedAccountAsync(tester, context.Network, cancellationToken: cts.Token).ConfigureAwait(true);
 
         await PayjoinIntegrationTestSupport.EnablePayjoinAsync(tester, context.User.StoreId, cancellationToken: cts.Token).ConfigureAwait(true);
 
@@ -42,15 +43,15 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
         using var tester = CreateServerTester(newDb: true);
-        var context = await PayjoinIntegrationTestSupport.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
-        var payer = await PayjoinIntegrationTestSupport.CreateInitializedAccountAsync(tester, context.Network, cancellationToken: cts.Token).ConfigureAwait(true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+        var payer = await PayjoinAccountTestHelper.CreateInitializedAccountAsync(tester, context.Network, cancellationToken: cts.Token).ConfigureAwait(true);
 
         await PayjoinIntegrationTestSupport.EnablePayjoinAsync(tester, context.User.StoreId, cancellationToken: cts.Token).ConfigureAwait(true);
 
         var (invoiceId, bip21Response) = await PayjoinIntegrationTestSupport.CreateInvoiceAndGetBip21Async(tester, context.User, cts.Token).ConfigureAwait(true);
         PayjoinIntegrationTestSupport.AssertPayjoinBip21(bip21Response);
 
-        await PayjoinIntegrationTestSupport.AssertReceiverSessionEventuallyCreatedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyCreatedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
 
         var delay = TimeSpan.FromSeconds(5);
         var paymentTask = PayjoinIntegrationTestSupport.PayInvoiceViaExternalPayjoinPayerAsync(
@@ -64,14 +65,14 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
 
         await Task.Delay(delay, cts.Token).ConfigureAwait(true);
 
-        var session = PayjoinIntegrationTestSupport.GetRequiredReceiverSession(tester, invoiceId);
-        Assert.NotEmpty(session.GetContributedInputs());
+        var session = PayjoinReceiverTestHelper.GetRequiredReceiverSession(tester, invoiceId);
+        Assert.True(session.TryGetContributedInput(out _));
 
         var transactionId = await paymentTask.ConfigureAwait(true);
         Assert.False(string.IsNullOrWhiteSpace(transactionId));
 
         await context.User.WaitInvoicePaid(invoiceId).WaitAsync(cts.Token).ConfigureAwait(true);
-        await PayjoinIntegrationTestSupport.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
     }
 
     [Fact
@@ -82,15 +83,15 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
         using var tester = CreateServerTester(newDb: true);
-        var context = await PayjoinIntegrationTestSupport.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
-        var payer = await PayjoinIntegrationTestSupport.CreateInitializedAccountAsync(tester, context.Network, cancellationToken: cts.Token).ConfigureAwait(true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+        var payer = await PayjoinAccountTestHelper.CreateInitializedAccountAsync(tester, context.Network, cancellationToken: cts.Token).ConfigureAwait(true);
 
         await PayjoinIntegrationTestSupport.EnablePayjoinAsync(tester, context.User.StoreId, cancellationToken: cts.Token).ConfigureAwait(true);
 
         var (invoiceId, bip21Response) = await PayjoinIntegrationTestSupport.CreateInvoiceAndGetBip21Async(tester, context.User, cts.Token).ConfigureAwait(true);
         PayjoinIntegrationTestSupport.AssertPayjoinBip21(bip21Response);
 
-        await PayjoinIntegrationTestSupport.AssertReceiverSessionEventuallyCreatedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyCreatedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
 
         await PayjoinIntegrationTestSupport.PayInvoiceViaExternalPayjoinPayerAsync(
             tester,
@@ -101,7 +102,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
             cts.Token).ConfigureAwait(true);
 
         await context.User.WaitInvoicePaid(invoiceId).WaitAsync(cts.Token).ConfigureAwait(true);
-        await PayjoinIntegrationTestSupport.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
     }
 
     [Fact
@@ -112,7 +113,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
         using var tester = CreateServerTester(newDb: true);
-        var context = await PayjoinIntegrationTestSupport.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
 
         var coldDerivation = await PayjoinIntegrationTestSupport.CreateTrackedColdWalletAsync(tester, cts.Token).ConfigureAwait(true);
         var expectedDirectoryUrl = new Uri("https://directory.example.test/");
@@ -169,8 +170,8 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
         using var tester = CreateServerTester(newDb: true);
-        var context = await PayjoinIntegrationTestSupport.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
-        var payer = await PayjoinIntegrationTestSupport.CreateInitializedAccountAsync(tester, context.Network, cancellationToken: cts.Token).ConfigureAwait(true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+        var payer = await PayjoinAccountTestHelper.CreateInitializedAccountAsync(tester, context.Network, cancellationToken: cts.Token).ConfigureAwait(true);
 
         var coldDerivation = await PayjoinIntegrationTestSupport.CreateTrackedColdWalletAsync(tester, cts.Token).ConfigureAwait(true);
         await PayjoinIntegrationTestSupport.EnablePayjoinAsync(tester, context.User.StoreId, settings =>
@@ -191,7 +192,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
         using var tester = CreateServerTester(newDb: true);
-        var context = await PayjoinIntegrationTestSupport.CreateInitializedTestContextAsync(tester, confirmFunding: false, cancellationToken: cts.Token).ConfigureAwait(true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, confirmFunding: false, cancellationToken: cts.Token).ConfigureAwait(true);
 
         await PayjoinIntegrationTestSupport.EnablePayjoinAsync(tester, context.User.StoreId, cancellationToken: cts.Token).ConfigureAwait(true);
 
@@ -214,7 +215,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
         using var tester = CreateServerTester(newDb: true);
-        var context = await PayjoinIntegrationTestSupport.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
 
         await PayjoinIntegrationTestSupport.DisablePayjoinAsync(tester, context.User.StoreId, cancellationToken: cts.Token).ConfigureAwait(true);
 
@@ -235,14 +236,14 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
         using var tester = CreateServerTester(newDb: true);
-        var context = await PayjoinIntegrationTestSupport.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
 
         await PayjoinIntegrationTestSupport.EnablePayjoinAsync(tester, context.User.StoreId, cancellationToken: cts.Token).ConfigureAwait(true);
 
         var (invoiceId, firstResponse) = await PayjoinIntegrationTestSupport.CreateInvoiceAndGetBip21Async(tester, context.User, cts.Token).ConfigureAwait(true);
         PayjoinIntegrationTestSupport.AssertPayjoinBip21(firstResponse);
 
-        await PayjoinIntegrationTestSupport.AssertReceiverSessionEventuallyCreatedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyCreatedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
 
         var sessionStore = tester.PayTester.GetService<PayjoinReceiverSessionStore>();
         Assert.Single(sessionStore.GetSessions(), s => s.InvoiceId == invoiceId);
@@ -262,7 +263,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
         using var tester = CreateServerTester(newDb: true);
-        var context = await PayjoinIntegrationTestSupport.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
 
         await PayjoinIntegrationTestSupport.DisablePayjoinAsync(tester, context.User.StoreId, cancellationToken: cts.Token).ConfigureAwait(true);
 
@@ -279,7 +280,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
         using var tester = CreateServerTester(newDb: true);
-        var context = await PayjoinIntegrationTestSupport.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
 
         await PayjoinIntegrationTestSupport.EnablePayjoinAsync(tester, context.User.StoreId, settings =>
         {
@@ -299,7 +300,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
         using var tester = CreateServerTester(newDb: true);
-        var context = await PayjoinIntegrationTestSupport.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
 
         await PayjoinIntegrationTestSupport.EnablePayjoinAsync(tester, context.User.StoreId, settings =>
         {
@@ -319,7 +320,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
         using var tester = CreateServerTester(newDb: true);
-        var context = await PayjoinIntegrationTestSupport.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
 
         await PayjoinIntegrationTestSupport.EnablePayjoinAsync(tester, context.User.StoreId, settings =>
         {
@@ -339,18 +340,18 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
         using var tester = CreateServerTester(newDb: true);
-        var context = await PayjoinIntegrationTestSupport.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
 
         await PayjoinIntegrationTestSupport.EnablePayjoinAsync(tester, context.User.StoreId, cancellationToken: cts.Token).ConfigureAwait(true);
 
         var (invoiceId, bip21Response) = await PayjoinIntegrationTestSupport.CreateInvoiceAndGetBip21Async(tester, context.User, cts.Token).ConfigureAwait(true);
         PayjoinIntegrationTestSupport.AssertPayjoinBip21(bip21Response);
 
-        await PayjoinIntegrationTestSupport.AssertReceiverSessionEventuallyCreatedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyCreatedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
 
         await context.User.PayInvoice(invoiceId).WaitAsync(cts.Token).ConfigureAwait(true);
 
-        await PayjoinIntegrationTestSupport.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
     }
 
     [Fact
@@ -361,20 +362,20 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
         using var tester = CreateServerTester(newDb: true);
-        var context = await PayjoinIntegrationTestSupport.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
 
         await PayjoinIntegrationTestSupport.EnablePayjoinAsync(tester, context.User.StoreId, cancellationToken: cts.Token).ConfigureAwait(true);
 
         var (invoiceId, bip21Response) = await PayjoinIntegrationTestSupport.CreateInvoiceAndGetBip21Async(tester, context.User, cts.Token).ConfigureAwait(true);
         PayjoinIntegrationTestSupport.AssertPayjoinBip21(bip21Response);
 
-        await PayjoinIntegrationTestSupport.AssertReceiverSessionEventuallyCreatedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyCreatedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
 
         var invoiceRepository = tester.PayTester.GetService<InvoiceRepository>();
         await invoiceRepository.UpdateInvoiceExpiry(invoiceId, TimeSpan.Zero).WaitAsync(cts.Token).ConfigureAwait(true);
 
-        await PayjoinIntegrationTestSupport.AssertInvoiceStatusEventuallyAsync(tester, invoiceId, InvoiceStatus.Expired, cts.Token).ConfigureAwait(true);
-        await PayjoinIntegrationTestSupport.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
+        await PayjoinInvoiceTestHelper.AssertInvoiceStatusEventuallyAsync(tester, invoiceId, InvoiceStatus.Expired, cts.Token).ConfigureAwait(true);
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
     }
 
     [Fact
@@ -385,21 +386,21 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
         using var tester = CreateServerTester(newDb: true);
-        var context = await PayjoinIntegrationTestSupport.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
 
         await PayjoinIntegrationTestSupport.EnablePayjoinAsync(tester, context.User.StoreId, cancellationToken: cts.Token).ConfigureAwait(true);
 
         var (invoiceId, bip21Response) = await PayjoinIntegrationTestSupport.CreateInvoiceAndGetBip21Async(tester, context.User, cts.Token).ConfigureAwait(true);
         PayjoinIntegrationTestSupport.AssertPayjoinBip21(bip21Response);
 
-        await PayjoinIntegrationTestSupport.AssertReceiverSessionEventuallyCreatedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyCreatedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
 
         var invoiceRepository = tester.PayTester.GetService<InvoiceRepository>();
         var marked = await invoiceRepository.MarkInvoiceStatus(invoiceId, InvoiceStatus.Invalid).WaitAsync(cts.Token).ConfigureAwait(true);
         Assert.True(marked);
 
-        await PayjoinIntegrationTestSupport.AssertInvoiceStatusEventuallyAsync(tester, invoiceId, InvoiceStatus.Invalid, cts.Token).ConfigureAwait(true);
-        await PayjoinIntegrationTestSupport.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
+        await PayjoinInvoiceTestHelper.AssertInvoiceStatusEventuallyAsync(tester, invoiceId, InvoiceStatus.Invalid, cts.Token).ConfigureAwait(true);
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
     }
 
     [Fact
@@ -410,20 +411,20 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
         using var tester = CreateServerTester(newDb: true);
-        var context = await PayjoinIntegrationTestSupport.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
-        var payer = await PayjoinIntegrationTestSupport.CreateInitializedAccountAsync(tester, context.Network, cancellationToken: cts.Token).ConfigureAwait(true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+        var payer = await PayjoinAccountTestHelper.CreateInitializedAccountAsync(tester, context.Network, cancellationToken: cts.Token).ConfigureAwait(true);
 
         await PayjoinIntegrationTestSupport.EnablePayjoinAsync(tester, context.User.StoreId, cancellationToken: cts.Token).ConfigureAwait(true);
 
         var (invoiceId, bip21Response) = await PayjoinIntegrationTestSupport.CreateInvoiceAndGetBip21Async(tester, context.User, cts.Token).ConfigureAwait(true);
         PayjoinIntegrationTestSupport.AssertPayjoinBip21(bip21Response);
 
-        await PayjoinIntegrationTestSupport.AssertReceiverSessionEventuallyCreatedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyCreatedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
 
         await context.User.PayInvoice(invoiceId).WaitAsync(cts.Token).ConfigureAwait(true);
         await context.User.WaitInvoicePaid(invoiceId).WaitAsync(cts.Token).ConfigureAwait(true);
 
-        await PayjoinIntegrationTestSupport.AssertReceiverSessionEventuallyCloseRequestedOrRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyCloseRequestedOrRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             PayjoinIntegrationTestSupport.PayInvoiceViaExternalPayjoinPayerAsync(
@@ -434,9 +435,9 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
                 new Uri(bip21Response.Bip21, UriKind.Absolute),
                 cts.Token)).ConfigureAwait(true);
 
-        // TODO: Replace this timeout assertion with a fast receiver rejection assertion once the payjoin library supports closing an in-flight session cleanly.
-        Assert.Contains("timed out", exception.Message, StringComparison.OrdinalIgnoreCase);
-        await PayjoinIntegrationTestSupport.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
+        Assert.Contains("rejected", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("timed out", exception.Message, StringComparison.OrdinalIgnoreCase);
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
     }
 
     [Fact
@@ -447,20 +448,20 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
         using var tester = CreateServerTester(newDb: true);
-        var context = await PayjoinIntegrationTestSupport.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
-        var payer = await PayjoinIntegrationTestSupport.CreateInitializedAccountAsync(tester, context.Network, cancellationToken: cts.Token).ConfigureAwait(true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+        var payer = await PayjoinAccountTestHelper.CreateInitializedAccountAsync(tester, context.Network, cancellationToken: cts.Token).ConfigureAwait(true);
 
         await PayjoinIntegrationTestSupport.EnablePayjoinAsync(tester, context.User.StoreId, cancellationToken: cts.Token).ConfigureAwait(true);
 
         var (invoiceId, bip21Response) = await PayjoinIntegrationTestSupport.CreateInvoiceAndGetBip21Async(tester, context.User, cts.Token).ConfigureAwait(true);
         PayjoinIntegrationTestSupport.AssertPayjoinBip21(bip21Response);
 
-        await PayjoinIntegrationTestSupport.AssertReceiverSessionEventuallyCreatedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyCreatedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
 
         var invoiceRepository = tester.PayTester.GetService<InvoiceRepository>();
         await invoiceRepository.UpdateInvoiceExpiry(invoiceId, TimeSpan.Zero).WaitAsync(cts.Token).ConfigureAwait(true);
 
-        await PayjoinIntegrationTestSupport.AssertInvoiceStatusEventuallyAsync(tester, invoiceId, InvoiceStatus.Expired, cts.Token).ConfigureAwait(true);
+        await PayjoinInvoiceTestHelper.AssertInvoiceStatusEventuallyAsync(tester, invoiceId, InvoiceStatus.Expired, cts.Token).ConfigureAwait(true);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             PayjoinIntegrationTestSupport.PayInvoiceViaExternalPayjoinPayerAsync(
@@ -471,9 +472,9 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
                 new Uri(bip21Response.Bip21, UriKind.Absolute),
                 cts.Token)).ConfigureAwait(true);
 
-        // TODO: Replace this timeout assertion with a fast receiver rejection assertion once the payjoin library supports closing an in-flight session cleanly.
-        Assert.Contains("timed out", exception.Message, StringComparison.OrdinalIgnoreCase);
-        await PayjoinIntegrationTestSupport.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
+        Assert.Contains("rejected", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("timed out", exception.Message, StringComparison.OrdinalIgnoreCase);
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
     }
 
     [Fact
@@ -484,22 +485,22 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
         using var tester = CreateServerTester(newDb: true);
-        var context = await PayjoinIntegrationTestSupport.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
-        var payer = await PayjoinIntegrationTestSupport.CreateInitializedAccountAsync(tester, context.Network, cancellationToken: cts.Token).ConfigureAwait(true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+        var payer = await PayjoinAccountTestHelper.CreateInitializedAccountAsync(tester, context.Network, cancellationToken: cts.Token).ConfigureAwait(true);
 
         await PayjoinIntegrationTestSupport.EnablePayjoinAsync(tester, context.User.StoreId, cancellationToken: cts.Token).ConfigureAwait(true);
 
         var (invoiceId, bip21Response) = await PayjoinIntegrationTestSupport.CreateInvoiceAndGetBip21Async(tester, context.User, cts.Token).ConfigureAwait(true);
         PayjoinIntegrationTestSupport.AssertPayjoinBip21(bip21Response);
 
-        await PayjoinIntegrationTestSupport.AssertReceiverSessionEventuallyCreatedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyCreatedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
 
         var invoiceRepository = tester.PayTester.GetService<InvoiceRepository>();
         var marked = await invoiceRepository.MarkInvoiceStatus(invoiceId, InvoiceStatus.Invalid).WaitAsync(cts.Token).ConfigureAwait(true);
         Assert.True(marked);
 
-        await PayjoinIntegrationTestSupport.AssertInvoiceStatusEventuallyAsync(tester, invoiceId, InvoiceStatus.Invalid, cts.Token).ConfigureAwait(true);
-        await PayjoinIntegrationTestSupport.AssertReceiverSessionEventuallyCloseRequestedOrRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
+        await PayjoinInvoiceTestHelper.AssertInvoiceStatusEventuallyAsync(tester, invoiceId, InvoiceStatus.Invalid, cts.Token).ConfigureAwait(true);
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyCloseRequestedOrRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             PayjoinIntegrationTestSupport.PayInvoiceViaExternalPayjoinPayerAsync(
@@ -510,9 +511,9 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
                 new Uri(bip21Response.Bip21, UriKind.Absolute),
                 cts.Token)).ConfigureAwait(true);
 
-        // TODO: Replace this timeout assertion with a fast receiver rejection assertion once the payjoin library supports closing an in-flight session cleanly.
-        Assert.Contains("timed out", exception.Message, StringComparison.OrdinalIgnoreCase);
-        await PayjoinIntegrationTestSupport.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
+        Assert.Contains("rejected", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("timed out", exception.Message, StringComparison.OrdinalIgnoreCase);
+        await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
     }
 
 }

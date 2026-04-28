@@ -21,14 +21,16 @@ public class Plugin : BaseBTCPayServerPlugin
         applicationBuilder.AddSingleton<PayjoinAvailabilityService>();
         applicationBuilder.AddSingleton<PayjoinReceiverSessionStore>();
         applicationBuilder.AddSingleton<PayjoinOhttpKeysProvider>();
+        applicationBuilder.AddSingleton<PayjoinSessionBuildLock>();
         applicationBuilder.AddSingleton<PayjoinUriSessionService>();
         applicationBuilder.AddSingleton<PayjoinInvoicePaymentUrlService>();
+        applicationBuilder.AddHostedService<PluginMigrationRunner>();
         applicationBuilder.AddHostedService<PayjoinReceiverPoller>();
         applicationBuilder.AddHostedService<PayjoinInvoiceSessionLifecycleService>();
-        applicationBuilder.AddHostedService<PluginMigrationRunner>();
         applicationBuilder.AddSingleton<PayjoinPluginService>();
         applicationBuilder.AddSingleton<IPayjoinStoreSettingsRepository, PayjoinStoreSettingsRepository>();
         applicationBuilder.AddSingleton<PayjoinPluginDbContextFactory>();
+        applicationBuilder.AddSingleton<IRunTestPaymentService, RunTestPaymentService>();
         applicationBuilder.AddDbContext<PayjoinPluginDbContext>((provider, o) =>
         {
             var factory = provider.GetRequiredService<PayjoinPluginDbContextFactory>();
