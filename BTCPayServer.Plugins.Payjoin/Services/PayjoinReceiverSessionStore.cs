@@ -2,6 +2,7 @@ using BTCPayServer.Client.Models;
 using BTCPayServer.Plugins.Payjoin.Data;
 using Microsoft.EntityFrameworkCore;
 using NBitcoin;
+using Npgsql;
 using Payjoin;
 using System;
 using System.Collections.Generic;
@@ -210,12 +211,27 @@ public sealed class PayjoinReceiverSessionStore
                 context.SaveChanges();
                 return;
             }
-            catch (DbUpdateException) when (attempt < maxAttempts)
+            catch (DbUpdateException ex) when (IsReceiverSessionEventSequenceConflict(ex))
             {
+                if (attempt == maxAttempts)
+                {
+                    throw;
+                }
+
                 // A concurrent app instance may have claimed the next sequence first.
                 // The unique (InvoiceId, Sequence) index is the durable ordering guard.
             }
         }
+    }
+
+    private static bool IsReceiverSessionEventSequenceConflict(DbUpdateException exception)
+    {
+        return exception.InnerException is PostgresException postgresException &&
+               postgresException.SqlState == PostgresErrorCodes.UniqueViolation &&
+               string.Equals(
+                   postgresException.ConstraintName,
+                   PayjoinPluginDbSchema.ReceiverSessionEventsInvoiceSequenceIndex,
+                   StringComparison.Ordinal);
     }
 
     private static PayjoinReceiverSessionState CreateState(PayjoinReceiverSessionData sessionData, string[]? events = null)

@@ -96,7 +96,8 @@ namespace BTCPayServer.Plugins.Payjoin.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("InvoiceId", "Sequence")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasDatabaseName(PayjoinPluginDbSchema.ReceiverSessionEventsInvoiceSequenceIndex);
 
                     b.ToTable(PayjoinPluginDbSchema.ReceiverSessionEventsTable, PayjoinPluginDbSchema.SchemaName);
                 });

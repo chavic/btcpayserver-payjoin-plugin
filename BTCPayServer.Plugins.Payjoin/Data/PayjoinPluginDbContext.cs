@@ -42,7 +42,9 @@ public class PayjoinPluginDbContext : DbContext
         {
             entity.ToTable(PayjoinPluginDbSchema.ReceiverSessionEventsTable);
             entity.HasKey(x => x.Id);
-            entity.HasIndex(x => new { x.InvoiceId, x.Sequence }).IsUnique();
+            entity.HasIndex(x => new { x.InvoiceId, x.Sequence })
+                .IsUnique()
+                .HasDatabaseName(PayjoinPluginDbSchema.ReceiverSessionEventsInvoiceSequenceIndex);
         });
     }
 }

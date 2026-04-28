@@ -63,7 +63,7 @@ namespace BTCPayServer.Plugins.Payjoin.Migrations
                 });
 
             migrationBuilder.CreateIndex(
-                name: "IX_ReceiverSessionEvents_InvoiceId_Sequence",
+                name: PayjoinPluginDbSchema.ReceiverSessionEventsInvoiceSequenceIndex,
                 schema: PayjoinPluginDbSchema.SchemaName,
                 table: PayjoinPluginDbSchema.ReceiverSessionEventsTable,
                 columns: new[] { "InvoiceId", "Sequence" },
