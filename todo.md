@@ -6,9 +6,13 @@ It is meant for contributors working from the plugin repo alone. Everything need
 
 ## Alpha Release Checklist (High-Level)
 
-- [ ] session persistence
+- [x] session persistence
+- [x] checkout model integration and payment toggle
+- [x] basic plugin integration-test CI enablement
 - [ ] history integration
+- [ ] restart/replay integration test
 - [ ] payjoin-cli sender/receiver e2e test integrated
+- [ ] release decision on the external-payer dev/test flow
 - [ ] a demo video
 - [ ] mainnet successes
 
@@ -20,6 +24,7 @@ Build a BTCPay Payjoin plugin that:
 - can be enabled per store
 - emits Payjoin-capable payment URLs with safe fallback to plain BIP21
 - survives BTCPay restart during an active receiver negotiation
+- has automated coverage for the receiver and checkout paths that should not regress
 - is structurally sound enough to keep building on
 
 The current plan is intentionally phased:
@@ -30,12 +35,20 @@ The current plan is intentionally phased:
 
 ## Current Baseline
 
-The active foundation work is split into two review branches:
+The current foundation baseline is Valera `master`.
 
-- `chavic/persist-receiver-sessions`: durable receiver-session persistence and replay behavior
-- `chavic/checkout-model-seam`: checkout URL ownership work stacked after persistence
+The durable receiver-session persistence branch and the checkout-model branch have both merged upstream. Contributors should treat those features as baseline code now, not as pending feature branches. Current open work should be based on `master` unless a PR explicitly says otherwise.
 
-The persistence branch should be reviewed first. The checkout branch depends on it and should be validated after persistence behavior is stable.
+The remaining open upstream PRs are:
+
+- PR #16: external-payer dev/test payment flow
+- PR #20: broader plugin error-handling hardening
+
+The remaining open upstream issues are:
+
+- issue #17: initialized OHTTP long-poll timeout diagnostics
+- issue #18: restart during in-flight payjoin receiver-session integration test
+- issue #19: old template database scaffolding cleanup
 
 ## What Is Already Done
 
@@ -43,47 +56,94 @@ These items are complete enough that they should not be reopened without a concr
 
 - Valera's plugin was adopted as the working base instead of starting greenfield
 - durable DB-backed receiver-session persistence was implemented
+- receiver-session persistence was merged upstream in PR #6
 - receiver sessions now persist event history and close-request state
 - contributed receiver input identity is persisted so replay can resume after restart
 - the database is now authoritative for receiver-session state
 - BTC checkout ownership for Payjoin URL fields was moved into BTCPay's payment-method checkout model seam
+- checkout model support, the Payjoin/Standard BTC checkout toggle, and Greenfield API Payjoin URLs were merged upstream in PR #22
 - the old `checkout-end` mutation path is no longer the source of truth
-- unit coverage was added for persistence behavior and checkout URL merge behavior
+- `RunTestPayment` is protected by BTCPay's `CheatModeRoute` pattern
+- same-wallet payjoin integration coverage was added
+- plugin integration tests are enabled in CI
+- poller policy unit coverage was added
+- unit coverage exists for persistence behavior and checkout URL merge behavior
 
 ## Ordered Remaining Work
 
-### 1. Finish Receiver Session Persistence Review
+### 1. Resolve Error-Handling Hardening
 
-Receiver-session persistence should remain database-authoritative. The store should avoid memory-first mutation patterns because a failed write can leave detached in-process state inconsistent with durable state.
+Finish review and follow-up for PR #20. The key correctness point is that `PayjoinReceiverPoller.ExecuteAsync` must also guard the session-loading boundary, not only per-session processing. `_sessionStore.GetSessions()` can throw before the current per-session `try/catch` runs, especially if plugin DB migration failed or the receiver-session tables are unavailable.
 
-- keep `PayjoinReceiverSessionState` scoped as an immutable snapshot/DTO
-- keep event sequencing protected by durable database constraints
-- avoid process-local locking as the primary consistency mechanism
-- keep terminal session cleanup explicit and persisted
-- keep focused unit coverage for replay, event append sequencing, and cleanup behavior
+Expected outcome:
 
-OHTTP long-poll timeout diagnostics are tracked separately in <https://github.com/ValeraFinebits/btcpayserver-payjoin-plugin/issues/17>. That issue should be handled as poller diagnostics and timeout behavior, not as part of the core persistence branch unless it blocks replay correctness.
+- session enumeration failures are logged and contained at the poller tick level
+- shutdown cancellation is still handled as shutdown, not logged as a plugin failure
+- a focused test covers `GetSessions()` throwing before any session is processed
 
-### 2. Validate Restart And Replay
+### 2. Fix Initialized Long-Poll Timeout Diagnostics
 
-Validate the persistence branch against a live BTCPay instance before treating it as ready to merge:
+Issue #17 tracks receiver sessions that remain in `Initialized` state while polling the OHTTP relay for a sender proposal. A local timeout while waiting for the relay should not produce repeated scary failure logs if it is an expected idle long-poll result.
 
-- a Payjoin-enabled BTC checkout creates or reuses a receiver session correctly
-- an active negotiation can be started
-- BTCPay can be restarted during the active negotiation
-- the receiver session reloads and replays deterministically enough after restart
-- a successful Payjoin removes the active session
-- a non-Payjoin terminal invoice path also cleans up a waiting session
+Expected outcome:
 
-### 3. Keep Checkout Work Separate
+- distinguish expected local poll timeout from real transport or relay failures
+- keep real cancellation during shutdown quiet or debug-level
+- avoid hiding sender-proposal processing failures after a proposal has actually arrived
 
-The checkout model seam should stay on its stacked branch until the persistence branch is accepted or otherwise stable enough to build on. It should not be used to hide persistence defects.
+### 3. Add Restart/Replay Integration Coverage
 
-- verify that Payjoin-capable BTC checkout URLs are emitted from the checkout model seam
-- preserve safe fallback to plain BIP21
-- cover both `pj` and `pjos` URL fields where relevant
-- cover API-issued invoice/payment URLs as well as the browser checkout path
-- keep merchant-facing checkout toggles explicit, with Payjoin enabled by default when the store supports it
+Issue #18 should turn the manual restart/replay validation into a repeatable integration test.
+
+Expected outcome:
+
+- start a receiver session for a Payjoin-enabled invoice
+- restart or recreate the BTCPay/plugin host while the session is in flight
+- verify the session reloads from durable storage
+- verify replay can continue deterministically enough for the receiver path
+- verify terminal invoice/session cleanup still happens
+
+### 4. Clean Template Database Scaffolding
+
+Issue #19 should remove leftover template database scaffolding that is not part of the payjoin plugin's real data model.
+
+Expected outcome:
+
+- remove unused template entities, migrations, snapshots, factories, or registrations
+- keep only payjoin-owned tables and migrations
+- verify a clean plugin database migration still initializes correctly
+
+### 5. Decide The External-Payer Dev/Test Flow
+
+PR #16 should be reviewed as dev/test infrastructure, not as user-facing checkout behavior. It should stay aligned with the `CheatModeRoute` pattern introduced by PR #13.
+
+Expected outcome:
+
+- decide whether the external-payer flow should merge now, be narrowed, or be deferred
+- keep any test-payment endpoint cheat-mode only
+- avoid reintroducing manual `_env.CheatMode` checks inside controller actions if routing can enforce the dev-only constraint
+
+### 6. Integrate Payjoin-CLI E2E Coverage
+
+The payjoin-cli harness exists, but the full sender/receiver E2E coverage is not yet a default automated gate.
+
+Expected outcome:
+
+- decide whether this belongs in regular CI, a scheduled/manual CI job, or documented local validation
+- cover the sender wallet, receiver invoice, OHTTP relay, and regtest mining requirements
+- make failures actionable enough for maintainers to debug without reproducing the whole setup manually
+
+### 7. Finish History And Release Validation
+
+Before broader release claims, make the merchant-visible history story explicit and validate the plugin outside the narrow local development path.
+
+Expected outcome:
+
+- define what "history integration" means for alpha release
+- record payjoin availability, fallback, completion, and failure states where merchants can understand them
+- produce a demo video
+- complete at least one testnet or mainnet validation pass
+- document any known release limitations instead of leaving them implicit
 
 ## Follow-Up Work After The Current Foundation Pass
 
@@ -92,11 +152,11 @@ This next phase is about making the current base easier to validate, maintain, a
 ### 1. Fork Alignment
 
 - inventory the plugin's required `rust-payjoin` FFI surface
-  - direct close-request support
-  - receiver outputs or original proposal PSBT access
-  - selected receiver input identification for `proposal.TryPreservingPrivacy(receiverInputs)`
-  - selected-input metadata support needed to replace BTCPay-specific persisted metadata
 - compare that surface against the current local `rust-payjoin` line
+- confirm direct close-request support
+- confirm receiver outputs or original proposal PSBT access
+- confirm selected receiver input identification for `proposal.TryPreservingPrivacy(receiverInputs)`
+- confirm selected-input metadata support needed to replace BTCPay-specific persisted metadata
 - decide whether alignment should happen immediately or in stages
 - execute the chosen alignment plan
 - revalidate the plugin after the alignment lands
@@ -144,7 +204,7 @@ Decide which remaining issues are must-fix before broader shipping claims and wh
 
 - decide whether falling back to unconfirmed merchant coins is acceptable when advertising payjoin availability
 - decide whether the OHTTP key cache lifetime should remain fixed or become configurable
-- remove the test endpoint from `UIPayJoinController` before making broader shipping claims
+- decide whether `RunTestPayment` should remain cheat-mode only or be removed before making broader shipping claims
 
 ## Later Treasury-Oriented Work
 
