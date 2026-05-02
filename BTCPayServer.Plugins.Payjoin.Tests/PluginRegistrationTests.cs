@@ -1,4 +1,5 @@
 using BTCPayServer.Abstractions.Contracts;
+using BTCPayServer.Plugins.Payjoin.Services;
 using Microsoft.Extensions.DependencyInjection;
 using System.Linq;
 using Xunit;
@@ -25,5 +26,8 @@ public class PluginRegistrationTests
         Assert.Contains(uiExtensions, extension =>
             extension.Location == "checkout-end" &&
             extension.Partial == "PayJoinBitcoinCheckoutEnd");
+        Assert.Contains(services, descriptor =>
+            descriptor.ServiceType == typeof(ISwaggerProvider) &&
+            descriptor.ImplementationType == typeof(PayjoinSwaggerProvider));
     }
 }

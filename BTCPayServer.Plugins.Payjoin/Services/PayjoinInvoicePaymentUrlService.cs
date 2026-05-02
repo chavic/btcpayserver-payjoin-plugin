@@ -1,3 +1,4 @@
+using BTCPayServer.Client.Models;
 using BTCPayServer.Payments;
 using BTCPayServer.Plugins.Payjoin.Models;
 using BTCPayServer.Services.Invoices;
@@ -47,6 +48,11 @@ public sealed class PayjoinInvoicePaymentUrlService : IPayjoinInvoicePaymentUrlS
 
         var invoice = await _invoiceRepository.GetInvoice(invoiceId).ConfigureAwait(false);
         if (invoice is null)
+        {
+            return null;
+        }
+
+        if (invoice.GetInvoiceState().Status != InvoiceStatus.New)
         {
             return null;
         }

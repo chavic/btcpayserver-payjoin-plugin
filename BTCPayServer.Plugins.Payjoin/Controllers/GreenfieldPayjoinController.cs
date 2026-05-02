@@ -1,11 +1,13 @@
 using BTCPayServer.Abstractions.Constants;
 using BTCPayServer.Abstractions.Extensions;
 using BTCPayServer.Client;
+using BTCPayServer.Client.Models;
 using BTCPayServer.Payments;
 using BTCPayServer.Plugins.Payjoin.Models;
 using BTCPayServer.Plugins.Payjoin.Services;
 using BTCPayServer.Services.Wallets;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Mvc;
 using System;
 using System.Threading;
@@ -13,8 +15,10 @@ using System.Threading.Tasks;
 
 namespace BTCPayServer.Plugins.Payjoin.Controllers;
 
+[ApiController]
 [Route("~/api/v1/stores/{storeId}/payjoin")]
 [Authorize(AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
+[EnableCors(CorsPolicies.All)]
 public sealed class GreenfieldPayjoinController : ControllerBase
 {
     private readonly IPayjoinStoreSettingsRepository _settingsRepository;
@@ -100,6 +104,11 @@ public sealed class GreenfieldPayjoinController : ControllerBase
         if (invoice is null || !string.Equals(invoice.StoreId, storeId, StringComparison.Ordinal))
         {
             return this.CreateAPIError(404, "invoice-not-found", "The invoice was not found");
+        }
+
+        if (invoice.GetInvoiceState().Status != InvoiceStatus.New)
+        {
+            return this.CreateAPIError(404, "payment-url-not-payable", "The invoice is not payable");
         }
 
         var paymentUrl = await _paymentUrlService.GetInvoicePaymentUrlAsync(invoiceId, cancellationToken).ConfigureAwait(false);

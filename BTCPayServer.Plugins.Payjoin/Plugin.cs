@@ -28,6 +28,7 @@ public class Plugin : BaseBTCPayServerPlugin
         applicationBuilder.AddSingleton<PayjoinOhttpKeysProvider>();
         applicationBuilder.AddSingleton<PayjoinSessionBuildLock>();
         applicationBuilder.AddSingleton<PayjoinUriSessionService>();
+        applicationBuilder.AddSingleton<ISwaggerProvider, PayjoinSwaggerProvider>();
         applicationBuilder.AddSingleton<IPayjoinInvoiceLookup, PayjoinInvoiceLookup>();
         applicationBuilder.AddSingleton<PayjoinInvoicePaymentUrlService>();
         applicationBuilder.AddSingleton<IPayjoinInvoicePaymentUrlService>(provider => provider.GetRequiredService<PayjoinInvoicePaymentUrlService>());

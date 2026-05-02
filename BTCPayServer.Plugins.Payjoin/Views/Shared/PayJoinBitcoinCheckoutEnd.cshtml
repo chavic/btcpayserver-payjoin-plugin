@@ -10,10 +10,12 @@
 <script>
 (function () {
     const controlsId = 'PayJoinCheckoutControls';
+    const controlsMountId = 'PayJoinCheckoutControlsMount';
     const testPaymentId = 'PayJoinCheckoutTestPayment';
     const runTestEnabled = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Env.CheatMode));
     const runTestEndpoint = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Url.Action("RunTestPayment", "UIPayJoin")));
     let selectedPaymentMode = null;
+    let tickScheduled = false;
 
     function getCheckoutVm() {
         const checkout = document.getElementById('Checkout');
@@ -83,10 +85,10 @@
         if (vm.$nextTick) {
             vm.$nextTick(function () {
                 refreshPaymentDom(paymentUrl, paymentUrlQr);
-                tick();
+                scheduleTick();
             });
         } else {
-            window.requestAnimationFrame(tick);
+            scheduleTick();
         }
     }
 
@@ -119,6 +121,10 @@
 
     function getPayInWalletButton() {
         return document.querySelector('#payment .payment-box #PayInWallet');
+    }
+
+    function getControlsMount() {
+        return document.getElementById(controlsMountId);
     }
 
     function getActiveTabStyle() {
@@ -187,6 +193,24 @@
         updateTabState(standardButton, standardActive, activeStyle);
     }
 
+    function placeControls(controls, payInWallet, controlsMount) {
+        if (payInWallet) {
+            if (controls.previousElementSibling !== payInWallet) {
+                payInWallet.insertAdjacentElement('afterend', controls);
+            }
+            return true;
+        }
+
+        if (controlsMount) {
+            if (controls.parentElement !== controlsMount) {
+                controlsMount.appendChild(controls);
+            }
+            return true;
+        }
+
+        return false;
+    }
+
     function renderControls() {
         const model = getModel();
         if (!shouldShowControls(model)) {
@@ -195,21 +219,33 @@
         }
 
         const payInWallet = getPayInWalletButton();
-        if (!payInWallet) {
+        const controlsMount = getControlsMount();
+        if (!payInWallet && !controlsMount) {
             return;
         }
 
         let controls = getControls();
         if (!controls) {
             controls = buildControls(model);
-            payInWallet.insertAdjacentElement('afterend', controls);
+            placeControls(controls, payInWallet, controlsMount);
             return;
         }
 
-        if (controls.previousElementSibling !== payInWallet) {
-            payInWallet.insertAdjacentElement('afterend', controls);
+        if (placeControls(controls, payInWallet, controlsMount)) {
+            updateControlState(controls, model);
         }
-        updateControlState(controls, model);
+    }
+
+    function scheduleTick() {
+        if (tickScheduled) {
+            return;
+        }
+
+        tickScheduled = true;
+        window.requestAnimationFrame(function () {
+            tickScheduled = false;
+            tick();
+        });
     }
 
     function getTestPayment() {
@@ -297,14 +333,12 @@
             const originalUpdateData = vm.updateData;
             vm.updateData = function () {
                 const result = originalUpdateData.apply(this, arguments);
-                window.requestAnimationFrame(tick);
+                scheduleTick();
                 return result;
             };
         }
         if (typeof vm.$watch === 'function') {
-            vm.$watch('srvModel', function () {
-                window.requestAnimationFrame(tick);
-            }, { deep: true });
+            vm.$watch('srvModel', scheduleTick, { deep: true });
         }
     }
 
@@ -331,10 +365,10 @@
         setPaymentUrl(paymentFields.url, paymentFields.qr);
     });
 
-    const observer = new MutationObserver(tick);
+    const observer = new MutationObserver(scheduleTick);
     observer.observe(document.documentElement, { childList: true, subtree: true });
-    document.addEventListener('DOMContentLoaded', tick);
-    const startupTimer = window.setInterval(tick, 250);
+    document.addEventListener('DOMContentLoaded', scheduleTick);
+    const startupTimer = window.setInterval(scheduleTick, 250);
     window.setTimeout(function () {
         window.clearInterval(startupTimer);
     }, 10000);
