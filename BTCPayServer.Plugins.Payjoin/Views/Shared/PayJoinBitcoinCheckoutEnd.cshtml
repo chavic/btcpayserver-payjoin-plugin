@@ -17,6 +17,7 @@
     let selectedPaymentMode = null;
     let paymentUrlFetchInvoiceId = null;
     let tickScheduled = false;
+    let observerStarted = false;
 
     function getCheckoutVm() {
         const checkout = document.getElementById('Checkout');
@@ -428,28 +429,24 @@
         updateTestPayment(testPayment, model);
     }
 
-    function patchCheckoutVm() {
-        const vm = getCheckoutVm();
-        if (!vm || vm.__payjoinUiPatched) {
+    const observer = new MutationObserver(scheduleTick);
+
+    function startObserver() {
+        if (observerStarted) {
             return;
         }
 
-        vm.__payjoinUiPatched = true;
-        if (typeof vm.updateData === 'function') {
-            const originalUpdateData = vm.updateData;
-            vm.updateData = function () {
-                const result = originalUpdateData.apply(this, arguments);
-                scheduleTick();
-                return result;
-            };
+        const target = document.getElementById('Checkout') || document.getElementById('payment');
+        if (!target) {
+            return;
         }
-        if (typeof vm.$watch === 'function') {
-            vm.$watch('srvModel', scheduleTick, { deep: true });
-        }
+
+        observerStarted = true;
+        observer.observe(target, { childList: true, subtree: true });
     }
 
     function tick() {
-        patchCheckoutVm();
+        startObserver();
         requestPayjoinPaymentUrl(getModel());
         applySelectedPaymentMode(getModel());
         renderControls();
@@ -472,13 +469,10 @@
         setPaymentUrl(paymentFields.url, paymentFields.qr);
     });
 
-    const observer = new MutationObserver(scheduleTick);
-    observer.observe(document.documentElement, { childList: true, subtree: true });
-    document.addEventListener('DOMContentLoaded', scheduleTick);
-    const startupTimer = window.setInterval(scheduleTick, 250);
-    window.setTimeout(function () {
-        window.clearInterval(startupTimer);
-    }, 10000);
+    document.addEventListener('DOMContentLoaded', function () {
+        startObserver();
+        scheduleTick();
+    });
     tick();
 })();
 </script>
