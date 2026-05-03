@@ -31,14 +31,6 @@ public sealed class PayjoinInvoicePaymentUrlService : IPayjoinInvoicePaymentUrlS
         _payjoinUriSessionService = payjoinUriSessionService;
     }
 
-    public GetBip21Response? GetCheckoutPaymentUrl(CheckoutModelContext context, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-        // BTCPay's checkout model seam is synchronous, so the checkout-context path must bridge
-        // into the existing async Payjoin URL builder here.
-        return GetCheckoutPaymentUrlAsync(context, cancellationToken).ConfigureAwait(false).GetAwaiter().GetResult();
-    }
-
     public async Task<GetBip21Response?> GetInvoicePaymentUrlAsync(string invoiceId, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(invoiceId))
@@ -77,27 +69,6 @@ public sealed class PayjoinInvoicePaymentUrlService : IPayjoinInvoicePaymentUrlS
             invoice.StoreId,
             invoice.MonitoringExpiration,
             prompt.Destination,
-            calculation.Due,
-            storeSettings,
-            cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task<GetBip21Response?> GetCheckoutPaymentUrlAsync(CheckoutModelContext context, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-
-        if (context.Prompt.PaymentMethodId != PaymentTypes.CHAIN.GetPaymentMethodId(CryptoCode) || context.Prompt.Destination is null)
-        {
-            return null;
-        }
-
-        var calculation = context.Prompt.Calculate();
-        var storeSettings = PayjoinStoreSettingsRepository.ReadSettings(context.StoreBlob);
-        return await BuildPaymentUrlAsync(
-            context.InvoiceEntity.Id,
-            context.Store.Id,
-            context.InvoiceEntity.MonitoringExpiration,
-            context.Prompt.Destination,
             calculation.Due,
             storeSettings,
             cancellationToken).ConfigureAwait(false);

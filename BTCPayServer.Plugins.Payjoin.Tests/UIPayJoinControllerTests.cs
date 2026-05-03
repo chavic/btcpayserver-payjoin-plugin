@@ -14,7 +14,7 @@ public class UIPayJoinControllerTests
 {
     private static UIPayJoinController CreateController(bool cheatMode)
     {
-        return new UIPayJoinController(CreateEnvironment(cheatMode), null!, null!, null!, null!, null!, null!);
+        return new UIPayJoinController(CreateEnvironment(cheatMode), null!, null!, null!, null!, null!, null!, null!);
     }
 
     private static RunTestPaymentResponse AssertRunTestPaymentFailure(ActionResult<RunTestPaymentResponse> actionResult, string expectedMessage)

@@ -5,6 +5,8 @@ using BTCPayServer.Payments;
 using BTCPayServer.Payments.Bitcoin;
 using BTCPayServer.Plugins.Payjoin.Models;
 using BTCPayServer.Services;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Routing;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
@@ -20,27 +22,24 @@ public sealed class PayjoinBitcoinCheckoutModelExtension : ICheckoutModelExtensi
     internal const string PlainBitcoinUrlQrKey = "payjoinPlainBitcoinUrlQR";
     internal const string PayjoinBitcoinUrlKey = "payjoinPaymentUrl";
     internal const string PayjoinBitcoinUrlQrKey = "payjoinPaymentUrlQR";
+    internal const string PayjoinPaymentUrlEndpointKey = "payjoinPaymentUrlEndpoint";
     internal const string PayjoinDefaultEnabledKey = "payjoinEnabledByDefault";
     private static readonly string[] PayjoinParameterKeys = [OutputSubstitutionParameterKey, PayjoinClient.BIP21EndpointKey];
     private readonly BitcoinCheckoutModelExtension _innerExtension;
-    private readonly PayjoinInvoicePaymentUrlService _paymentUrlService;
 
     public PayjoinBitcoinCheckoutModelExtension(
         BTCPayNetworkProvider networkProvider,
         IEnumerable<IPaymentLinkExtension> paymentLinkExtensions,
-        DisplayFormatter displayFormatter,
-        PayjoinInvoicePaymentUrlService paymentUrlService)
+        DisplayFormatter displayFormatter)
     {
         ArgumentNullException.ThrowIfNull(networkProvider);
         ArgumentNullException.ThrowIfNull(paymentLinkExtensions);
         ArgumentNullException.ThrowIfNull(displayFormatter);
-        ArgumentNullException.ThrowIfNull(paymentUrlService);
 
         PaymentMethodId = PaymentTypes.CHAIN.GetPaymentMethodId(CryptoCode);
         var network = networkProvider.GetNetwork<BTCPayNetwork>(CryptoCode)
             ?? throw new InvalidOperationException($"Network not available for {CryptoCode}");
         _innerExtension = new BitcoinCheckoutModelExtension(PaymentMethodId, network, paymentLinkExtensions, displayFormatter);
-        _paymentUrlService = paymentUrlService;
     }
 
     public PaymentMethodId PaymentMethodId { get; }
@@ -58,13 +57,29 @@ public sealed class PayjoinBitcoinCheckoutModelExtension : ICheckoutModelExtensi
             return;
         }
 
-        var paymentUrl = _paymentUrlService.GetCheckoutPaymentUrl(context);
-        if (paymentUrl is null)
+        var paymentUrlEndpoint = context.UrlHelper.Action(new UrlActionContext
+        {
+            Action = "GetInvoicePaymentUrl",
+            Controller = "UIPayJoin",
+            Values = new { invoiceId = context.InvoiceEntity.Id }
+        });
+        ApplyPayjoinCheckoutMetadata(context.Model, paymentUrlEndpoint);
+    }
+
+    internal static void ApplyPayjoinCheckoutMetadata(CheckoutModel model, string? paymentUrlEndpoint)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+
+        if (string.IsNullOrWhiteSpace(paymentUrlEndpoint))
         {
             return;
         }
 
-        ApplyPayjoinPaymentUrl(context.Model, paymentUrl);
+        model.AdditionalData ??= new Dictionary<string, JToken>();
+        model.AdditionalData[PlainBitcoinUrlKey] = JToken.FromObject(model.InvoiceBitcoinUrl ?? string.Empty);
+        model.AdditionalData[PlainBitcoinUrlQrKey] = JToken.FromObject(model.InvoiceBitcoinUrlQR ?? string.Empty);
+        model.AdditionalData[PayjoinPaymentUrlEndpointKey] = JToken.FromObject(paymentUrlEndpoint);
+        model.AdditionalData[PayjoinDefaultEnabledKey] = JToken.FromObject(true);
     }
 
     internal static void ApplyPayjoinPaymentUrl(CheckoutModel model, GetBip21Response paymentUrl)
