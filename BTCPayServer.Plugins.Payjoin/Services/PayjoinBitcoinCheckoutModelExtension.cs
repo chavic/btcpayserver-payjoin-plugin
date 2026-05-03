@@ -57,16 +57,17 @@ public sealed class PayjoinBitcoinCheckoutModelExtension : ICheckoutModelExtensi
             return;
         }
 
+        var storeSettings = PayjoinStoreSettingsRepository.ReadSettings(context.StoreBlob);
         var paymentUrlEndpoint = context.UrlHelper.Action(new UrlActionContext
         {
             Action = "GetInvoicePaymentUrl",
             Controller = "UIPayJoin",
             Values = new { invoiceId = context.InvoiceEntity.Id }
         });
-        ApplyPayjoinCheckoutMetadata(context.Model, paymentUrlEndpoint);
+        ApplyPayjoinCheckoutMetadata(context.Model, paymentUrlEndpoint, storeSettings.EnabledByDefault);
     }
 
-    internal static void ApplyPayjoinCheckoutMetadata(CheckoutModel model, string? paymentUrlEndpoint)
+    internal static void ApplyPayjoinCheckoutMetadata(CheckoutModel model, string? paymentUrlEndpoint, bool payjoinEnabledByDefault)
     {
         ArgumentNullException.ThrowIfNull(model);
 
@@ -79,10 +80,10 @@ public sealed class PayjoinBitcoinCheckoutModelExtension : ICheckoutModelExtensi
         model.AdditionalData[PlainBitcoinUrlKey] = JToken.FromObject(model.InvoiceBitcoinUrl ?? string.Empty);
         model.AdditionalData[PlainBitcoinUrlQrKey] = JToken.FromObject(model.InvoiceBitcoinUrlQR ?? string.Empty);
         model.AdditionalData[PayjoinPaymentUrlEndpointKey] = JToken.FromObject(paymentUrlEndpoint);
-        model.AdditionalData[PayjoinDefaultEnabledKey] = JToken.FromObject(true);
+        model.AdditionalData[PayjoinDefaultEnabledKey] = JToken.FromObject(payjoinEnabledByDefault);
     }
 
-    internal static void ApplyPayjoinPaymentUrl(CheckoutModel model, GetBip21Response paymentUrl)
+    internal static void ApplyPayjoinPaymentUrl(CheckoutModel model, GetBip21Response paymentUrl, bool payjoinEnabledByDefault)
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(paymentUrl);
@@ -102,7 +103,7 @@ public sealed class PayjoinBitcoinCheckoutModelExtension : ICheckoutModelExtensi
         model.AdditionalData[PlainBitcoinUrlQrKey] = JToken.FromObject(plainUrlQr);
         model.AdditionalData[PayjoinBitcoinUrlKey] = JToken.FromObject(payjoinUrl);
         model.AdditionalData[PayjoinBitcoinUrlQrKey] = JToken.FromObject(payjoinUrlQr);
-        model.AdditionalData[PayjoinDefaultEnabledKey] = JToken.FromObject(true);
+        model.AdditionalData[PayjoinDefaultEnabledKey] = JToken.FromObject(payjoinEnabledByDefault);
         model.InvoiceBitcoinUrl = payjoinUrl;
         model.InvoiceBitcoinUrlQR = payjoinUrlQr;
     }

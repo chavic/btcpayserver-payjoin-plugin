@@ -170,6 +170,14 @@
         };
     }
 
+    function getSelectedPaymentMode(model) {
+        if (selectedPaymentMode) {
+            return selectedPaymentMode;
+        }
+
+        return model.payjoinEnabledByDefault === false ? 'standard' : 'payjoin';
+    }
+
     function setPaymentUrl(paymentUrl, paymentUrlQr) {
         const vm = getCheckoutVm();
         const model = vm && vm.srvModel;
@@ -204,7 +212,7 @@
             return;
         }
 
-        const mode = selectedPaymentMode || 'payjoin';
+        const mode = getSelectedPaymentMode(model);
         const paymentFields = getPaymentFields(model, mode);
         if (!paymentFields.url || !paymentFields.qr) {
             return;

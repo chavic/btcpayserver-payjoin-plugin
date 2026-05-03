@@ -71,7 +71,7 @@ public class PayjoinBitcoinCheckoutModelExtensionTests
             Bip21 = "bitcoin:bcrt1qexample?amount=0.10000000&pjos=0&pj=https%3A%2F%2Fexample.com%2Fpj"
         };
 
-        PayjoinBitcoinCheckoutModelExtension.ApplyPayjoinPaymentUrl(model, paymentUrl);
+        PayjoinBitcoinCheckoutModelExtension.ApplyPayjoinPaymentUrl(model, paymentUrl, true);
 
         Assert.Equal(
             "bitcoin:bcrt1qexample?amount=0.10000000&pjos=0&pj=https%3A%2F%2Fexample.com%2Fpj&lightning=lnbcrt123",
@@ -102,9 +102,29 @@ public class PayjoinBitcoinCheckoutModelExtensionTests
             Bip21 = "bitcoin:bcrt1qexample?amount=0.10000000"
         };
 
-        PayjoinBitcoinCheckoutModelExtension.ApplyPayjoinPaymentUrl(model, paymentUrl);
+        PayjoinBitcoinCheckoutModelExtension.ApplyPayjoinPaymentUrl(model, paymentUrl, true);
 
         Assert.Equal("bitcoin:bcrt1qexample?amount=0.10000000", model.InvoiceBitcoinUrl);
         Assert.Empty(model.AdditionalData);
+    }
+
+    [Fact]
+    public void ApplyPayjoinCheckoutMetadataReflectsStoreDefaultMode()
+    {
+        var model = new CheckoutModel
+        {
+            InvoiceBitcoinUrl = "bitcoin:bcrt1qexample?amount=0.10000000",
+            InvoiceBitcoinUrlQR = "bitcoin:BCRT1QEXAMPLE?amount=0.10000000"
+        };
+
+        PayjoinBitcoinCheckoutModelExtension.ApplyPayjoinCheckoutMetadata(model, "/plugins/payjoin/invoices/test/payment-url", false);
+
+        Assert.Equal(
+            "bitcoin:bcrt1qexample?amount=0.10000000",
+            model.AdditionalData[PayjoinBitcoinCheckoutModelExtension.PlainBitcoinUrlKey].ToObject<string>());
+        Assert.Equal(
+            "/plugins/payjoin/invoices/test/payment-url",
+            model.AdditionalData[PayjoinBitcoinCheckoutModelExtension.PayjoinPaymentUrlEndpointKey].ToObject<string>());
+        Assert.False(model.AdditionalData[PayjoinBitcoinCheckoutModelExtension.PayjoinDefaultEnabledKey].ToObject<bool>());
     }
 }
