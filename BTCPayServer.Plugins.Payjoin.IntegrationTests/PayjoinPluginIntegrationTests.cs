@@ -17,9 +17,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
     {
     }
 
-    [Fact
-    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
-    ]
+    [Fact]
     [Trait("Integration", "Integration")]
     public async Task CreateInvoiceAndPayItThroughThePayjoinPluginWithExternalPayer()
     {
@@ -35,9 +33,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         PayjoinIntegrationTestSupport.AssertSuccessfulPayjoinTransaction(paymentResult);
     }
 
-    [Fact
-    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
-    ]
+    [Fact]
     [Trait("Integration", "Integration")]
     public async Task CreateInvoiceAndPayItThroughThePayjoinPluginWithSameWalletPayer()
     {
@@ -92,9 +88,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
     }
 
-    [Fact
-    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
-    ]
+    [Fact]
     [Trait("Integration", "Integration")]
     public async Task SuccessfulPayjoinRemovesReceiverSession()
     {
@@ -122,9 +116,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
     }
 
-    [Fact
-    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
-    ]
+    [Fact]
     [Trait("Integration", "Integration")]
     public async Task DisablePayjoinPreservesExistingStoreSettings()
     {
@@ -152,9 +144,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         Assert.Equal(expectedRelayUrl, storeSettings.OhttpRelayUrl);
     }
 
-    [Fact
-    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
-    ]
+    [Fact]
     [Trait("Integration", "Integration")]
     public async Task GetBip21DoesNotEnablePayjoinWhenMerchantHasNoCoins()
     {
@@ -179,9 +169,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         PayjoinIntegrationTestSupport.AssertPlainBip21(bip21Response);
     }
 
-    [Fact
-    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
-    ]
+    [Fact]
     [Trait("Integration", "Integration")]
     public async Task PayjoinChangeOutputGoesToColdWalletWithExternalPayer()
     {
@@ -201,9 +189,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         await PayjoinIntegrationTestSupport.AssertColdWalletReceivedPayjoinChangeAsync(tester, coldDerivation, paymentResult, cts.Token).ConfigureAwait(true);
     }
 
-    [Fact
-    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
-    ]
+    [Fact]
     [Trait("Integration", "Integration")]
     public async Task GetBip21DoesNotEnablePayjoinWhenMerchantHasOnlyUnconfirmedCoins()
     {
@@ -224,9 +210,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         PayjoinIntegrationTestSupport.AssertPlainBip21(bip21Response);
     }
 
-    [Fact
-    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
-    ]
+    [Fact]
     [Trait("Integration", "Integration")]
     public async Task GetBip21DoesNotEnablePayjoinWhenStoreSettingDisabledDoesNotCreateReceiverSession()
     {
@@ -245,9 +229,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         Assert.DoesNotContain(sessionStore.GetSessions(), session => session.InvoiceId == invoiceId);
     }
 
-    [Fact
-    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
-    ]
+    [Fact]
     [Trait("Integration", "Integration")]
     public async Task CheckoutModelUsesPayjoinUrlAndCreatesReceiverSessionWhenEnabled()
     {
@@ -335,9 +317,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         Assert.Single(sessionStore.GetSessions(), s => s.InvoiceId == invoiceId);
     }
 
-    [Fact
-    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
-    ]
+    [Fact]
     [Trait("Integration", "Integration")]
     public async Task GetBip21DoesNotEnablePayjoinWhenStoreSettingDisabled()
     {
@@ -352,9 +332,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         PayjoinIntegrationTestSupport.AssertPlainBip21(bip21Response);
     }
 
-    [Fact
-    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
-    ]
+    [Fact]
     [Trait("Integration", "Integration")]
     public async Task GetBip21DoesNotEnablePayjoinWhenOhttpRelayUrlMissing()
     {
@@ -372,9 +350,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         PayjoinIntegrationTestSupport.AssertPlainBip21(bip21Response);
     }
 
-    [Fact
-    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
-    ]
+    [Fact]
     [Trait("Integration", "Integration")]
     public async Task GetBip21DoesNotEnablePayjoinWhenDirectoryUrlMissing()
     {
@@ -392,9 +368,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         PayjoinIntegrationTestSupport.AssertPlainBip21(bip21Response);
     }
 
-    [Fact
-    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
-    ]
+    [Fact]
     [Trait("Integration", "Integration")]
     public async Task GetBip21FallsBackToPlainBip21WhenOhttpKeysFetchFails()
     {
@@ -412,9 +386,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         PayjoinIntegrationTestSupport.AssertPlainBip21(bip21Response);
     }
 
-    [Fact
-    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
-    ]
+    [Fact]
     [Trait("Integration", "Integration")]
     public async Task ReceiverSessionIsRemovedWhenInvoiceGetsPaidWithoutPayjoin()
     {
@@ -434,9 +406,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
     }
 
-    [Fact
-    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
-    ]
+    [Fact]
     [Trait("Integration", "Integration")]
     public async Task ReceiverSessionIsRemovedWhenInvoiceExpires()
     {
@@ -458,9 +428,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
     }
 
-    [Fact
-    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
-    ]
+    [Fact]
     [Trait("Integration", "Integration")]
     public async Task ReceiverSessionIsRemovedWhenInvoiceBecomesInvalid()
     {
@@ -483,9 +451,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
     }
 
-    [Fact
-    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
-    ]
+    [Fact]
     [Trait("Integration", "Integration")]
     public async Task PayjoinRequestFailsWhenInvoiceWasAlreadyPaid()
     {
@@ -520,9 +486,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
     }
 
-    [Fact
-    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
-    ]
+    [Fact]
     [Trait("Integration", "Integration")]
     public async Task PayjoinRequestFailsWhenInvoiceWasExpired()
     {
@@ -557,9 +521,7 @@ public class PayjoinPluginIntegrationTests : UnitTestBase
         await PayjoinReceiverTestHelper.AssertReceiverSessionEventuallyRemovedAsync(tester, invoiceId, cts.Token).ConfigureAwait(true);
     }
 
-    [Fact
-    (Skip = "Manual Docker-backed integration test. Remove Skip to run it explicitly.")
-    ]
+    [Fact]
     [Trait("Integration", "Integration")]
     public async Task PayjoinRequestFailsWhenInvoiceBecomesInvalid()
     {
