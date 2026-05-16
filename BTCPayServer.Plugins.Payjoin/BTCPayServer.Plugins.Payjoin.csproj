@@ -20,6 +20,17 @@
     <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
     <AnalysisLevel>6.0-all</AnalysisLevel>
   </PropertyGroup>
+  <PropertyGroup>
+    <PayjoinAutoGenerateNativeBindings Condition="'$(PayjoinAutoGenerateNativeBindings)' == ''">true</PayjoinAutoGenerateNativeBindings>
+    <PayjoinFfiRoot>..\rust-payjoin\payjoin-ffi</PayjoinFfiRoot>
+    <PayjoinCSharpRoot>$(PayjoinFfiRoot)\csharp</PayjoinCSharpRoot>
+    <PayjoinGeneratedCs>$(PayjoinCSharpRoot)\src\payjoin.cs</PayjoinGeneratedCs>
+    <PayjoinHttpCs>$(PayjoinCSharpRoot)\Payjoin.Http.cs</PayjoinHttpCs>
+    <PayjoinIsMacOS>$([MSBuild]::IsOSPlatform('OSX'))</PayjoinIsMacOS>
+    <PayjoinNativeLibrary Condition="'$(OS)' == 'Windows_NT'">$(PayjoinCSharpRoot)\lib\payjoin_ffi.dll</PayjoinNativeLibrary>
+    <PayjoinNativeLibrary Condition="'$(OS)' != 'Windows_NT' and '$(PayjoinIsMacOS)' == 'true'">$(PayjoinCSharpRoot)\lib\libpayjoin_ffi.dylib</PayjoinNativeLibrary>
+    <PayjoinNativeLibrary Condition="'$(OS)' != 'Windows_NT' and '$(PayjoinIsMacOS)' != 'true'">$(PayjoinCSharpRoot)\lib\libpayjoin_ffi.so</PayjoinNativeLibrary>
+  </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
     <TreatWarningsAsErrors>True</TreatWarningsAsErrors>
     <WarningLevel>9999</WarningLevel>
@@ -66,16 +77,41 @@
   </ItemGroup>
 
   <ItemGroup>
-	<Compile Include="..\rust-payjoin\payjoin-ffi\csharp\Payjoin.Http.cs" Condition="Exists('..\rust-payjoin\payjoin-ffi\csharp\Payjoin.Http.cs')" />
-    <Compile Include="..\rust-payjoin\payjoin-ffi\csharp\src\payjoin.cs" Condition="Exists('..\rust-payjoin\payjoin-ffi\csharp\src\payjoin.cs')" />
-    <None Include="..\rust-payjoin\payjoin-ffi\csharp\lib\libpayjoin_ffi.so" Condition="Exists('..\rust-payjoin\payjoin-ffi\csharp\lib\libpayjoin_ffi.so')">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="..\rust-payjoin\payjoin-ffi\csharp\lib\libpayjoin_ffi.dylib" Condition="Exists('..\rust-payjoin\payjoin-ffi\csharp\lib\libpayjoin_ffi.dylib')">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="..\rust-payjoin\payjoin-ffi\csharp\lib\payjoin_ffi.dll" Condition="Exists('..\rust-payjoin\payjoin-ffi\csharp\lib\payjoin_ffi.dll')">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    <PayjoinNativeGenerationInput Include="$(PayjoinFfiRoot)\Cargo.toml" />
+    <PayjoinNativeGenerationInput Include="$(PayjoinFfiRoot)\Cargo.lock" />
+    <PayjoinNativeGenerationInput Include="$(PayjoinFfiRoot)\uniffi.toml" />
+    <PayjoinNativeGenerationInput Include="$(PayjoinFfiRoot)\uniffi-bindgen.rs" />
+    <PayjoinNativeGenerationInput Include="$(PayjoinFfiRoot)\src\**\*.rs" />
+    <PayjoinNativeGenerationInput Include="$(PayjoinCSharpRoot)\scripts\generate_bindings.sh" />
+    <PayjoinNativeGenerationInput Include="$(PayjoinCSharpRoot)\scripts\generate_bindings.ps1" />
   </ItemGroup>
+
+  <ItemGroup>
+	<Compile Include="$(PayjoinHttpCs)" />
+    <Compile Include="$(PayjoinGeneratedCs)" />
+  </ItemGroup>
+
+  <Target Name="GeneratePayjoinBindingsIfNeeded"
+          BeforeTargets="CoreCompile"
+          Condition="'$(PayjoinAutoGenerateNativeBindings)' == 'true' and Exists('$(PayjoinFfiRoot)\Cargo.toml')"
+          Inputs="@(PayjoinNativeGenerationInput)"
+          Outputs="$(PayjoinGeneratedCs);$(PayjoinNativeLibrary)">
+    <Message Text="Payjoin: generating native bindings and artifacts..." Importance="high" />
+    <Exec Condition="'$(OS)' == 'Windows_NT'"
+          Command="powershell -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\rust-payjoin\payjoin-ffi\csharp\scripts\generate_bindings.ps1&quot;" />
+    <Exec Condition="'$(OS)' != 'Windows_NT'"
+          Command="bash &quot;$(MSBuildProjectDirectory)/../rust-payjoin/payjoin-ffi/csharp/scripts/generate_bindings.sh&quot;" />
+  </Target>
+
+  <Target Name="CopyPayjoinNativeLibrariesToBuildOutput" AfterTargets="Build">
+    <Copy SourceFiles="$(PayjoinCSharpRoot)\lib\libpayjoin_ffi.so" DestinationFolder="$(TargetDir)" Condition="Exists('$(PayjoinCSharpRoot)\lib\libpayjoin_ffi.so')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(PayjoinCSharpRoot)\lib\libpayjoin_ffi.dylib" DestinationFolder="$(TargetDir)" Condition="Exists('$(PayjoinCSharpRoot)\lib\libpayjoin_ffi.dylib')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(PayjoinCSharpRoot)\lib\payjoin_ffi.dll" DestinationFolder="$(TargetDir)" Condition="Exists('$(PayjoinCSharpRoot)\lib\payjoin_ffi.dll')" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyPayjoinNativeLibrariesToPublishOutput" AfterTargets="Publish">
+    <Copy SourceFiles="$(PayjoinCSharpRoot)\lib\libpayjoin_ffi.so" DestinationFolder="$(PublishDir)" Condition="Exists('$(PayjoinCSharpRoot)\lib\libpayjoin_ffi.so')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(PayjoinCSharpRoot)\lib\libpayjoin_ffi.dylib" DestinationFolder="$(PublishDir)" Condition="Exists('$(PayjoinCSharpRoot)\lib\libpayjoin_ffi.dylib')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(PayjoinCSharpRoot)\lib\payjoin_ffi.dll" DestinationFolder="$(PublishDir)" Condition="Exists('$(PayjoinCSharpRoot)\lib\payjoin_ffi.dll')" SkipUnchangedFiles="true" />
+  </Target>
 </Project>
