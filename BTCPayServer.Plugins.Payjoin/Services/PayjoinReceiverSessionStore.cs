@@ -25,24 +25,33 @@ public sealed class PayjoinReceiverSessionStore
         _uniqueConstraintViolationDetector = uniqueConstraintViolationDetector;
     }
 
-    public PayjoinReceiverSessionState CreateSession(
+    internal PayjoinReceiverSessionState CreateSession(
         string invoiceId,
         string receiverAddress,
         string storeId,
         SystemUri ohttpRelayUrl,
         DateTimeOffset monitoringExpiresAt,
-        out bool created)
+        IEnumerable<string> bootstrapEvents)
     {
         ArgumentNullException.ThrowIfNull(ohttpRelayUrl);
-        using var context = _pluginDbContextFactory.CreateContext();
-        if (TryLoadSessionCore(context, invoiceId, out var existing))
+        ArgumentNullException.ThrowIfNull(bootstrapEvents);
+
+        var persistedEvents = bootstrapEvents.ToArray();
+        if (persistedEvents.Length == 0)
         {
-            created = false;
-            return existing;
+            throw new ArgumentException("Bootstrap events must contain the initial receiver session state.", nameof(bootstrapEvents));
         }
 
+        using var context = _pluginDbContextFactory.CreateContext();
+        var sessionData = LoadSessionDataCore(context, invoiceId, asNoTracking: false);
         var now = DateTimeOffset.UtcNow;
-        var sessionData = new PayjoinReceiverSessionData
+
+        if (sessionData is not null)
+        {
+            return CreateState(sessionData, LoadEventsCore(context, invoiceId));
+        }
+
+        sessionData = new PayjoinReceiverSessionData
         {
             InvoiceId = invoiceId,
             StoreId = storeId,
@@ -52,20 +61,20 @@ public sealed class PayjoinReceiverSessionStore
             CreatedAt = now,
             UpdatedAt = now
         };
-
         context.ReceiverSessions.Add(sessionData);
+
+        AddBootstrapEvents(context, invoiceId, persistedEvents, now);
+
         try
         {
             context.SaveChanges();
-            created = true;
-            return CreateState(sessionData);
+            return CreateState(sessionData, persistedEvents);
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException ex) when (IsReceiverSessionConflict(ex))
         {
-            context.ChangeTracker.Clear();
-            if (TryLoadSessionCore(context, invoiceId, out existing))
+            using var recoveryContext = _pluginDbContextFactory.CreateContext();
+            if (TryLoadSessionCore(recoveryContext, invoiceId, out var existing))
             {
-                created = false;
                 return existing;
             }
 
@@ -259,7 +268,8 @@ public sealed class PayjoinReceiverSessionStore
         }
 
         context.ReceiverInputReservations.RemoveRange(expiredReservations);
-        return context.SaveChanges();
+        context.SaveChanges();
+        return expiredReservations.Length;
     }
 
     public bool TryConsumeInitializedPollAfterCloseRequest(string invoiceId)
@@ -336,6 +346,11 @@ public sealed class PayjoinReceiverSessionStore
         return _uniqueConstraintViolationDetector.IsUniqueConstraintViolation(exception, PayjoinPluginDbSchema.ReceiverSessionEventsInvoiceSequenceIndex);
     }
 
+    private bool IsReceiverSessionConflict(DbUpdateException exception)
+    {
+        return _uniqueConstraintViolationDetector.IsUniqueConstraintViolation(exception, PayjoinPluginDbSchema.ReceiverSessionsPrimaryKey);
+    }
+
     private bool IsReceiverInputReservationConflict(DbUpdateException exception)
     {
         return _uniqueConstraintViolationDetector.IsUniqueConstraintViolation(exception, PayjoinPluginDbSchema.ReceiverInputReservationsOutPointIndex);
@@ -384,7 +399,7 @@ public sealed class PayjoinReceiverSessionStore
         string invoiceId,
         out PayjoinReceiverSessionState session)
     {
-        var sessionData = context.ReceiverSessions.AsNoTracking().SingleOrDefault(x => x.InvoiceId == invoiceId);
+        var sessionData = LoadSessionDataCore(context, invoiceId, asNoTracking: true);
         if (sessionData is null)
         {
             session = null!;
@@ -403,6 +418,36 @@ public sealed class PayjoinReceiverSessionStore
             .OrderBy(x => x.Sequence)
             .Select(x => x.Event)
             .ToArray();
+    }
+
+    private static PayjoinReceiverSessionData? LoadSessionDataCore(
+        PayjoinPluginDbContext context,
+        string invoiceId,
+        bool asNoTracking)
+    {
+        IQueryable<PayjoinReceiverSessionData> query = context.ReceiverSessions;
+        if (asNoTracking)
+        {
+            query = query.AsNoTracking();
+        }
+
+        return query.SingleOrDefault(x => x.InvoiceId == invoiceId);
+    }
+
+    private static void AddBootstrapEvents(PayjoinPluginDbContext context, string invoiceId, IEnumerable<string> bootstrapEvents, DateTimeOffset createdAt)
+    {
+        var sequence = 0;
+        foreach (var @event in bootstrapEvents)
+        {
+            sequence++;
+            context.ReceiverSessionEvents.Add(new PayjoinReceiverSessionEventData
+            {
+                InvoiceId = invoiceId,
+                Sequence = sequence,
+                Event = @event,
+                CreatedAt = createdAt
+            });
+        }
     }
 
     private string[] LoadEvents(string invoiceId)

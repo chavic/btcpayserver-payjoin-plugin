@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using NBitcoin;
 using Payjoin;
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -25,11 +26,11 @@ public sealed class PayjoinUriSessionService
             LogLevel.Warning,
             new EventId(3, nameof(LogUnexpectedPayjoinFallback)),
             "Falling back to plain BIP21 for invoice {InvoiceId}: {Reason}");
-    private static readonly Action<ILogger, string, Exception?> LogUninitializedSessionRebuild =
+    private static readonly Action<ILogger, string, Exception?> LogInvalidPersistedSessionRebuild =
         LoggerMessage.Define<string>(
             LogLevel.Warning,
-            new EventId(4, nameof(LogUninitializedSessionRebuild)),
-            "Rebuilding uninitialized payjoin receiver session for invoice {InvoiceId}.");
+            new EventId(4, nameof(LogInvalidPersistedSessionRebuild)),
+            "Persisted payjoin receiver session for invoice {InvoiceId} had an empty event log and will be rebuilt.");
 
     private readonly BTCPayNetworkProvider _networkProvider;
     private readonly PayjoinReceiverSessionStore _receiverSessionStore;
@@ -116,32 +117,34 @@ public sealed class PayjoinUriSessionService
         try
         {
             using var sessionBuildLock = await _sessionBuildLock.AcquireAsync(invoiceId, cancellationToken).ConfigureAwait(false);
-            var session = _receiverSessionStore.CreateSession(
-                invoiceId,
-                destination,
-                storeId,
-                ohttpRelayUrl,
-                monitoringExpiresAt,
-                out var created);
-
-            if (!created && session.GetEvents().Length == 0)
+            PayjoinReceiverSessionState? session = null;
+            if (_receiverSessionStore.TryGetSession(invoiceId, out var persistedSession) && persistedSession is not null)
             {
-                LogUninitializedSessionRebuild(_logger, invoiceId, null);
-                _receiverSessionStore.RemoveSession(invoiceId);
+                if (persistedSession.GetEvents().Length == 0)
+                {
+                    LogInvalidPersistedSessionRebuild(_logger, invoiceId, null);
+                    _receiverSessionStore.RemoveSession(invoiceId);
+                }
+                else
+                {
+                    session = persistedSession;
+                }
+            }
+
+            if (session is null)
+            {
+                var bootstrapPersister = new BufferedReceiverSessionPersister();
+                InitializeSession(destination, due, directoryUrl, ohttpKeys, bootstrapPersister);
                 session = _receiverSessionStore.CreateSession(
                     invoiceId,
                     destination,
                     storeId,
                     ohttpRelayUrl,
                     monitoringExpiresAt,
-                    out created);
+                    bootstrapPersister.Load());
             }
 
             var persister = _receiverSessionStore.CreatePersister(session);
-            if (created)
-            {
-                InitializeSession(destination, due, directoryUrl, ohttpKeys, persister);
-            }
 
             using var replay = PayjoinMethods.ReplayReceiverEventLog(persister);
             using var history = replay.SessionHistory();
@@ -192,5 +195,21 @@ public sealed class PayjoinUriSessionService
     {
         LogUnexpectedPayjoinFallback(_logger, invoiceId, reason, null);
         return bip21;
+    }
+
+    private sealed class BufferedReceiverSessionPersister : JsonReceiverSessionPersister
+    {
+        private readonly List<string> _events = [];
+
+        public void Save(string @event)
+        {
+            _events.Add(@event);
+        }
+
+        public string[] Load() => _events.ToArray();
+
+        public void Close()
+        {
+        }
     }
 }
