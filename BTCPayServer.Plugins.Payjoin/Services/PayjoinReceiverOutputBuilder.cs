@@ -9,6 +9,7 @@ using System;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Payjoin_ = global::Payjoin;
 
 namespace BTCPayServer.Plugins.Payjoin.Services;
 
@@ -16,13 +17,13 @@ internal sealed class PayjoinReceiverOutputBuilder : IPayjoinReceiverOutputBuild
 {
     internal sealed class OutputReplacement
     {
-        internal OutputReplacement(PlainTxOut[] exactPaymentOutputs, byte[] receiverChangeScript)
+        internal OutputReplacement(Payjoin_.TxOut[] exactPaymentOutputs, byte[] receiverChangeScript)
         {
             ExactPaymentOutputs = exactPaymentOutputs;
             ReceiverChangeScript = receiverChangeScript;
         }
 
-        internal PlainTxOut[] ExactPaymentOutputs { get; }
+        internal Payjoin_.TxOut[] ExactPaymentOutputs { get; }
 
         internal byte[] ReceiverChangeScript { get; }
     }
@@ -107,8 +108,8 @@ internal sealed class PayjoinReceiverOutputBuilder : IPayjoinReceiverOutputBuild
         return new OutputReplacement(
             new[]
             {
-                new PlainTxOut(exactPaymentAmountSats, receiverScript),
-                new PlainTxOut(0, receiverChangeScript)
+                new Payjoin_.TxOut(exactPaymentAmountSats, receiverScript),
+                new Payjoin_.TxOut(0, receiverChangeScript)
             },
             receiverChangeScript);
     }

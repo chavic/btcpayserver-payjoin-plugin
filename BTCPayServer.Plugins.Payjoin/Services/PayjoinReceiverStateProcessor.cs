@@ -3,6 +3,7 @@ using System;
 using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
+using Payjoin_ = global::Payjoin;
 using SystemUri = System.Uri;
 
 namespace BTCPayServer.Plugins.Payjoin.Services;
@@ -126,7 +127,7 @@ internal sealed class PayjoinReceiverStateProcessor : IPayjoinReceiverStateProce
         // creating a replyable receiver rejection from the current session state. The current bindings
         // do not expose persisted `error_state()` or an explicit `Unavailable`/session-closed reject path,
         // so we temporarily route invoice-closed sessions through `CheckBroadcastSuitability`.
-        using var rejectionTransition = proposal.CheckBroadcastSuitability(null, new CloseRequestedBroadcastGuard(context.Session));
+        using var rejectionTransition = proposal.CheckBroadcastSuitability(minFeeRateSatPerKwu: null, canBroadcast: new CloseRequestedBroadcastGuard(context.Session));
 
         try
         {
@@ -187,7 +188,7 @@ internal sealed class PayjoinReceiverStateProcessor : IPayjoinReceiverStateProce
     // TODO: Implement a persistent store of seen outpoints and check against it here.
     internal sealed class NoInputsSeenCallback : IsOutputKnown
     {
-        public bool Callback(PlainOutPoint _outpoint) => false;
+        public bool Callback(Payjoin_.OutPoint _outpoint) => false;
     }
 
     internal sealed class CloseRequestedBroadcastGuard : CanBroadcast

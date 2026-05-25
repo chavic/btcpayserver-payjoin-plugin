@@ -134,7 +134,7 @@ internal sealed class PayjoinReceiverProposalSigner : IPayjoinReceiverProposalSi
         }
     }
 
-    private static bool IsContributedReceiverInput(OutPoint prevOut, ReceivedCoin[] receiverCoins)
+    private static bool IsContributedReceiverInput(NBitcoin.OutPoint prevOut, ReceivedCoin[] receiverCoins)
     {
         return receiverCoins.Any(receiverCoin => receiverCoin.OutPoint == prevOut);
     }
