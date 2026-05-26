@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Payjoin_ = global::Payjoin;
 
 namespace BTCPayServer.Plugins.Payjoin.Services;
 
@@ -111,13 +110,13 @@ internal sealed class PayjoinReceiverInputSelector : IPayjoinReceiverInputSelect
         var inputs = confirmed
             .Select(c =>
             {
-                var txin = new Payjoin_.TxIn(
-                    new Payjoin_.OutPoint(c.OutPoint.Hash.ToString(), (uint)c.OutPoint.N),
+                var txin = new TxIn(
+                    new OutPoint(c.OutPoint.Hash.ToString(), (uint)c.OutPoint.N),
                     Array.Empty<byte>(),
                     uint.MaxValue,
                     Array.Empty<byte[]>());
-                var txout = new Payjoin_.TxOut(checked((ulong)c.Coin.Amount.Satoshi), c.ScriptPubKey.ToBytes());
-                var psbtIn = new Payjoin_.PsbtInput(txout, null, null);
+                var txout = new TxOut(checked((ulong)c.Coin.Amount.Satoshi), c.ScriptPubKey.ToBytes());
+                var psbtIn = new PsbtInput(txout, null, null);
                 return new InputPair(txin, psbtIn, null);
             })
             .ToArray();

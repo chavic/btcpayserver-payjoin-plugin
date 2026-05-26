@@ -1,7 +1,7 @@
 using BTCPayServer.Client.Models;
 using BTCPayServer.Plugins.Payjoin.Services;
 using Xunit;
-using Payjoin_ = global::Payjoin;
+using Payjoin;
 using SystemUri = System.Uri;
 
 namespace BTCPayServer.Plugins.Payjoin.Tests.Services;
@@ -25,8 +25,8 @@ public class PayjoinReceiverStateProcessorTests
     {
         var callback = new PayjoinReceiverStateProcessor.NoInputsSeenCallback();
 
-        var first = callback.Callback(new Payjoin_.OutPoint("1111111111111111111111111111111111111111111111111111111111111111", 0));
-        var second = callback.Callback(new Payjoin_.OutPoint("2222222222222222222222222222222222222222222222222222222222222222", 1));
+        var first = callback.Callback(new OutPoint("1111111111111111111111111111111111111111111111111111111111111111", 0));
+        var second = callback.Callback(new OutPoint("2222222222222222222222222222222222222222222222222222222222222222", 1));
 
         Assert.False(first);
         Assert.False(second);

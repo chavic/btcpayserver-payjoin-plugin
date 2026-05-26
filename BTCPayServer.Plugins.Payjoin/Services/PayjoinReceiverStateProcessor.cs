@@ -3,7 +3,6 @@ using System;
 using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
-using Payjoin_ = global::Payjoin;
 using SystemUri = System.Uri;
 
 namespace BTCPayServer.Plugins.Payjoin.Services;
@@ -188,7 +187,7 @@ internal sealed class PayjoinReceiverStateProcessor : IPayjoinReceiverStateProce
     // TODO: Implement a persistent store of seen outpoints and check against it here.
     internal sealed class NoInputsSeenCallback : IsOutputKnown
     {
-        public bool Callback(Payjoin_.OutPoint _outpoint) => false;
+        public bool Callback(OutPoint _outpoint) => false;
     }
 
     internal sealed class CloseRequestedBroadcastGuard : CanBroadcast
