@@ -110,13 +110,13 @@ internal sealed class PayjoinReceiverInputSelector : IPayjoinReceiverInputSelect
         var inputs = confirmed
             .Select(c =>
             {
-                var txin = new PlainTxIn(
-                    new PlainOutPoint(c.OutPoint.Hash.ToString(), (uint)c.OutPoint.N),
+                var txin = new TxIn(
+                    new OutPoint(c.OutPoint.Hash.ToString(), (uint)c.OutPoint.N),
                     Array.Empty<byte>(),
                     uint.MaxValue,
                     Array.Empty<byte[]>());
-                var txout = new PlainTxOut(checked((ulong)c.Coin.Amount.Satoshi), c.ScriptPubKey.ToBytes());
-                var psbtIn = new PlainPsbtInput(txout, null, null);
+                var txout = new TxOut(checked((ulong)c.Coin.Amount.Satoshi), c.ScriptPubKey.ToBytes());
+                var psbtIn = new PsbtInput(txout, null, null);
                 return new InputPair(txin, psbtIn, null);
             })
             .ToArray();

@@ -154,7 +154,7 @@ public sealed class PayjoinReceiverSessionStore
     public bool TryReserveContributedInput(
         string storeId,
         string invoiceId,
-        OutPoint outPoint,
+        NBitcoin.OutPoint outPoint,
         DateTimeOffset expiresAt)
     {
         ArgumentNullException.ThrowIfNull(outPoint);
