@@ -6,11 +6,21 @@ It is meant for contributors working from the plugin repo alone. Everything need
 
 ## Alpha Release Checklist (High-Level)
 
-- [ ] session persistence
-- [ ] history integration
-- [ ] payjoin-cli sender/receiver e2e test integrated
+- [x] session persistence
+- [x] checkout model integration and payment toggle
+- [x] basic plugin integration-test CI enablement
+- [x] receiver poller/service hardening pass
+- [x] receiver input reservations
+- [x] atomic bootstrap event persistence
+- [x] restart/replay integration coverage
+- [x] release mode for native FFI package generation
+- [ ] accounting bridge and final receiver-output reconciliation
+- [ ] Payjoin v2 default/availability UX
+- [ ] wallet compatibility behavior for non-v2 senders
+- [ ] history and notification parity with normal BTCPay payments
+- [ ] payjoin-cli sender/receiver e2e test integrated as an intentional validation path
 - [ ] a demo video
-- [ ] mainnet successes
+- [ ] testnet or mainnet successes
 
 ## Project Goal
 
@@ -20,83 +30,150 @@ Build a BTCPay Payjoin plugin that:
 - can be enabled per store
 - emits Payjoin-capable payment URLs with safe fallback to plain BIP21
 - survives BTCPay restart during an active receiver negotiation
+- records payment/accounting state in a way that matches BTCPay expectations
+- clearly tells merchants and payers when Payjoin v2 is available, unavailable, used, or bypassed
 - is structurally sound enough to keep building on
 
 The current plan is intentionally phased:
 
-- close the current foundation work
-- harden, automate, and reduce dependency risk
-- extend toward more treasury-oriented behavior
+- keep the merged foundation stable
+- finish receiver accounting, default availability, and compatibility work
+- harden automation, diagnostics, and release validation
+- extend toward more treasury-oriented behavior later
 
 ## Current Baseline
 
-The active foundation work is split into two review branches:
+The current baseline is Valera `master`.
 
-- `chavic/persist-receiver-sessions`: durable receiver-session persistence and replay behavior
-- `chavic/checkout-model-seam`: checkout URL ownership work stacked after persistence
+The durable receiver-session persistence branch, checkout-model branch, receiver hardening stack, restart replay test, release packaging mode, and template database cleanup have merged upstream. Contributors should treat those features as baseline code now, not as pending feature branches. Current open work should be based on `master` unless a PR explicitly says otherwise.
 
-The persistence branch should be reviewed first. The checkout branch depends on it and should be validated after persistence behavior is stable.
+Recently merged upstream work includes:
+
+- PR #6: receiver-session persistence
+- PR #16: external-payer support for RunTestPayment
+- PR #20: receiver error handling
+- PR #22: checkout model support and payment toggle
+- PR #23: PayjoinReceiverPoller refactor
+- PR #25: receiver input reservations
+- PR #26: atomic bootstrap event persistence
+- PR #29: migrations project and EF configuration cleanup
+- PR #30: initialized poll timeout handling
+- PR #31: template database scaffolding removal
+- PR #32: FFI bitcoin type and unit alignment
+- PR #33: release FFI packaging mode
+- PR #34: restart/replay integration coverage
+
+The remaining open upstream PRs are:
+
+- PR #41: accounting bridge and receiver output reconciliation
+- PR #43: enable Payjoin v2 by default
+- PR #44: Payjoin v2 overview page
+
+The remaining open upstream issues that matter for release readiness are:
+
+- issue #35: PayJoin availability tracking
+- issue #37: enable Payjoin v2 by default
+- issue #38: Payjoin v2 invoices fail with wallets that only support v1
+- issue #39: output selection for BTCPay Server is magnifying UIH
+- issue #42: migrate from Newtonsoft.Json to System.Text.Json for .NET 10 compatibility
 
 ## What Is Already Done
 
 These items are complete enough that they should not be reopened without a concrete bug or architecture decision:
 
 - Valera's plugin was adopted as the working base instead of starting greenfield
-- durable DB-backed receiver-session persistence was implemented
-- receiver sessions now persist event history and close-request state
-- contributed receiver input identity is persisted so replay can resume after restart
-- the database is now authoritative for receiver-session state
-- BTC checkout ownership for Payjoin URL fields was moved into BTCPay's payment-method checkout model seam
+- durable DB-backed receiver-session persistence was implemented and merged
+- receiver sessions persist event history, close-request state, and contributed receiver input identity
+- the database is authoritative for receiver-session state
+- BTC checkout ownership for Payjoin URL fields lives in BTCPay's payment-method checkout model seam
 - the old `checkout-end` mutation path is no longer the source of truth
-- unit coverage was added for persistence behavior and checkout URL merge behavior
+- checkout model support, the Payjoin/Standard BTC checkout toggle, and Greenfield API Payjoin URLs were merged
+- `RunTestPayment` is protected by BTCPay's `CheatModeRoute` pattern
+- same-wallet payjoin integration coverage was added
+- plugin integration tests are enabled in CI
+- receiver polling was decomposed into focused services
+- receiver input reservations and bootstrap event persistence are in the mainline
+- restart/replay has baseline integration coverage
+- FFI bitcoin naming/unit alignment and release package generation support have landed
 
 ## Ordered Remaining Work
 
-### 1. Finish Receiver Session Persistence Review
+### 1. Finish Accounting Bridge Review
 
-Receiver-session persistence should remain database-authoritative. The store should avoid memory-first mutation patterns because a failed write can leave detached in-process state inconsistent with durable state.
+PR #41 should settle how the plugin accounts Payjoin v2 final transactions when the final receiver output does not look like the original invoice output.
 
-- keep `PayjoinReceiverSessionState` scoped as an immutable snapshot/DTO
-- keep event sequencing protected by durable database constraints
-- avoid process-local locking as the primary consistency mechanism
-- keep terminal session cleanup explicit and persisted
-- keep focused unit coverage for replay, event append sequencing, and cleanup behavior
+Expected outcome:
 
-OHTTP long-poll timeout diagnostics are tracked separately in <https://github.com/ValeraFinebits/btcpayserver-payjoin-plugin/issues/17>. That issue should be handled as poller diagnostics and timeout behavior, not as part of the core persistence branch unless it blocks replay correctness.
+- do not create synthetic BTCPay payments from fallback metadata before the final transaction is observed
+- use the actual final transaction RBF flag when creating BTCPay payment details
+- reconcile the accounted payment to the final Payjoin transaction output
+- keep the fallback transaction as bridge metadata unless it is actually observed as the payment path
+- make any remaining lifecycle gaps explicit, especially received-payment event/webhook parity and proposal-derived accounting amount
 
-### 2. Validate Restart And Replay
+### 2. Review Payjoin v2 Defaults And Availability UX
 
-Validate the persistence branch against a live BTCPay instance before treating it as ready to merge:
+PR #43 and PR #44 should be reviewed together with issues #35, #37, and #38.
 
-- a Payjoin-enabled BTC checkout creates or reuses a receiver session correctly
-- an active negotiation can be started
-- BTCPay can be restarted during the active negotiation
-- the receiver session reloads and replays deterministically enough after restart
-- a successful Payjoin removes the active session
-- a non-Payjoin terminal invoice path also cleans up a waiting session
+Expected outcome:
 
-### 3. Keep Checkout Work Separate
+- decide whether Payjoin v2 should be enabled by default for stores
+- show merchant-facing Payjoin v2 availability/status clearly on the plugin page
+- show payer-facing availability or fallback states clearly on checkout
+- avoid surprising wallets that only support v1 or plain BIP21
+- make unavailable states understandable, such as insufficient merchant UTXOs or unsupported sender capabilities
 
-The checkout model seam should stay on its stacked branch until the persistence branch is accepted or otherwise stable enough to build on. It should not be used to hide persistence defects.
+### 3. Finish .NET 10 Compatibility Cleanup
 
-- verify that Payjoin-capable BTC checkout URLs are emitted from the checkout model seam
-- preserve safe fallback to plain BIP21
-- cover both `pj` and `pjos` URL fields where relevant
-- cover API-issued invoice/payment URLs as well as the browser checkout path
-- keep merchant-facing checkout toggles explicit, with Payjoin enabled by default when the store supports it
+Issue #42 tracks removing Newtonsoft.Json usage where it blocks .NET 10 compatibility.
 
-## Follow-Up Work After The Current Foundation Pass
+Expected outcome:
 
-This next phase is about making the current base easier to validate, maintain, and operate.
+- migrate relevant plugin JSON handling to System.Text.Json
+- keep API payloads and persisted data compatible where required
+- add focused tests if behavior changes are possible
+
+### 4. Close History And Notification Parity
+
+The plugin should not silently diverge from BTCPay's normal payment lifecycle.
+
+Expected outcome:
+
+- define what history integration means for alpha release
+- make Payjoin v2 received/settled/fallback states visible where merchants expect payment history
+- preserve webhook/notification behavior expected from normal on-chain BTC payments
+- document any intentional deviations before broader release claims
+
+### 5. Integrate Payjoin-CLI E2E Coverage
+
+The payjoin-cli harness exists, but the full sender/receiver E2E path still needs an intentional validation home.
+
+Expected outcome:
+
+- decide whether this belongs in regular CI, scheduled/manual CI, or documented local validation
+- cover sender wallet, receiver invoice, OHTTP relay, and regtest mining requirements
+- make failures actionable enough for maintainers to debug without manually reconstructing the whole environment
+
+### 6. Complete Release Validation
+
+Before broader release claims, validate the plugin outside the narrow local development path.
+
+Expected outcome:
+
+- produce a demo video
+- complete at least one testnet or mainnet validation pass
+- document known release limitations
+- decide which remaining issues are alpha blockers versus acceptable follow-up debt
+
+## Follow-Up Work After Alpha Readiness
 
 ### 1. Fork Alignment
 
 - inventory the plugin's required `rust-payjoin` FFI surface
-  - direct close-request support
-  - receiver outputs or original proposal PSBT access
-  - selected receiver input identification for `proposal.TryPreservingPrivacy(receiverInputs)`
-  - selected-input metadata support needed to replace BTCPay-specific persisted metadata
 - compare that surface against the current local `rust-payjoin` line
+- confirm direct close-request support
+- confirm receiver outputs or original proposal PSBT access
+- confirm selected receiver input identification for `proposal.TryPreservingPrivacy(receiverInputs)`
+- confirm selected-input metadata support needed to replace BTCPay-specific persisted metadata
 - decide whether alignment should happen immediately or in stages
 - execute the chosen alignment plan
 - revalidate the plugin after the alignment lands
@@ -111,6 +188,8 @@ Turn the high-value manual cases into reliable automated coverage:
 - cleanup on invoice state transitions
 - successful session completion and removal
 - configured cold-change routing
+- accounting bridge reconciliation
+- Payjoin v2 unavailable/fallback UI states
 
 ### 3. Correctness Hardening
 
@@ -121,7 +200,7 @@ Tighten the remaining rough edges in the receiver path:
 - better receiver-owned script handling
 - removal of temporary input-contribution shortcuts
 - tighter tracking of truly contributed receiver inputs
-- remove the receiver-output fallback to `invoice.Due` and source those values from the incoming proposal
+- remove any receiver-output fallback to live `invoice.Due` where proposal-derived values are available
 - validate that the invoice amount matches the receiver amount in the incoming proposal before replacement outputs are built
 - simplify receiver proposal signing, PSBT normalization, and signing-context ownership if the poller flow keeps growing
 - clarify the proposal-normalization pipeline if receiver-input finalization and sender-input cleanup continue to diverge
@@ -137,14 +216,6 @@ Improve observability so failures are easier to understand:
 - merchant-facing failure reasons for payjoin setup, fallback, and cleanup paths
 - payer-facing failure reasons when payjoin negotiation is rejected, abandoned, or falls back to plain BIP21
 - clearer explanation of when payjoin was unavailable versus when plain BIP21 was intentionally used
-
-### 5. Shipping Cutoff
-
-Decide which remaining issues are must-fix before broader shipping claims and which can remain temporary debt.
-
-- decide whether falling back to unconfirmed merchant coins is acceptable when advertising payjoin availability
-- decide whether the OHTTP key cache lifetime should remain fixed or become configurable
-- remove the test endpoint from `UIPayJoinController` before making broader shipping claims
 
 ## Later Treasury-Oriented Work
 
