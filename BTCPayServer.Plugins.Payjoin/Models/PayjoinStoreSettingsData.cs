@@ -1,17 +1,19 @@
 using System;
-using System.ComponentModel.DataAnnotations;
 
 namespace BTCPayServer.Plugins.Payjoin.Models;
 
-public sealed class PayjoinStoreSettingsData
+public sealed class PayjoinStoreSettingsData : PayjoinStoreSettingsInput
 {
-    public bool EnabledByDefault { get; set; }
+    public static PayjoinStoreSettingsData FromSettings(PayjoinStoreSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
 
-    [Required]
-    public Uri? DirectoryUrl { get; set; } = PayjoinStoreSettings.DefaultDirectoryUrl;
-
-    [Required]
-    public Uri? OhttpRelayUrl { get; set; } = PayjoinStoreSettings.DefaultOhttpRelayUrl;
-
-    public string? ColdWalletDerivationScheme { get; set; }
+        return new PayjoinStoreSettingsData
+        {
+            PayjoinV2Enabled = settings.PayjoinV2Enabled,
+            DirectoryUrl = settings.DirectoryUrl,
+            OhttpRelayUrl = settings.OhttpRelayUrl,
+            ColdWalletDerivationScheme = settings.ColdWalletDerivationScheme
+        };
+    }
 }

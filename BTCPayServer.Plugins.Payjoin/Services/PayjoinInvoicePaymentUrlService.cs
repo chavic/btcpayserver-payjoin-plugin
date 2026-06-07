@@ -121,7 +121,7 @@ public sealed class PayjoinInvoicePaymentUrlService : IPayjoinInvoicePaymentUrlS
             destination,
             due,
             storeSettings,
-            storeSettings.EnabledByDefault,
+            storeSettings.PayjoinV2Enabled,
             invoiceId,
             storeId,
             monitoringExpiresAt,
