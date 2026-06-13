@@ -1,3 +1,4 @@
+using BTCPayServer.Data;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
@@ -18,6 +19,9 @@ public sealed class PayjoinReceiverPoller : BackgroundService
     private static readonly Action<ILogger, string, Exception?> LogPayjoinAccountingBridgePendingWithoutReconciliation =
         LoggerMessage.Define<string>(LogLevel.Debug, new EventId(3, nameof(LogPayjoinAccountingBridgePendingWithoutReconciliation)),
             "Payjoin accounting bridge remains pending for {InvoiceId} because reconciliation produced no payment update.");
+    private static readonly Action<ILogger, string, Exception?> LogPayjoinAccountingBridgeAwaitingPaymentSettlement =
+        LoggerMessage.Define<string>(LogLevel.Debug, new EventId(4, nameof(LogPayjoinAccountingBridgeAwaitingPaymentSettlement)),
+            "Payjoin accounting bridge remains pending for {InvoiceId} until the reconciled payment settles.");
     private readonly PayjoinReceiverSessionStore _sessionStore;
     private readonly IPayjoinReceiverSessionProcessor _sessionProcessor;
     private readonly IPayjoinAccountingBridgeService _accountingBridgeService;
@@ -63,6 +67,15 @@ public sealed class PayjoinReceiverPoller : BackgroundService
                 if (payment is null)
                 {
                     LogPayjoinAccountingBridgePendingWithoutReconciliation(_logger, bridge.InvoiceId, null);
+                    continue;
+                }
+
+                if (payment.Status != PaymentStatus.Settled)
+                {
+                    // Keep the bridge pending so the next tick re-reconciles once the final
+                    // transaction has enough confirmations; retiring it here would leave the
+                    // payment stuck in Processing until an unrelated block event updates it.
+                    LogPayjoinAccountingBridgeAwaitingPaymentSettlement(_logger, bridge.InvoiceId, null);
                     continue;
                 }
 

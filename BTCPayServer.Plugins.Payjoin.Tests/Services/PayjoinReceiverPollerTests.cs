@@ -1,3 +1,4 @@
+using BTCPayServer.Data;
 using BTCPayServer.Plugins.Payjoin.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -147,6 +148,61 @@ public class PayjoinReceiverPollerTests
     }
 
     [Fact]
+    public async Task ProcessTickOnceAsyncKeepsBridgePendingWhenReconciledPaymentIsNotSettled()
+    {
+        // Arrange
+        using var testContext = new TestContext();
+        var logger = new TestLogger<PayjoinReceiverPoller>();
+        var sessionProcessor = new RecordingSessionProcessor();
+        var accountingBridgeService = new RecordingAccountingBridgeService
+        {
+            PendingBridges = [CreatePendingBridge("invoice-awaiting-settlement")]
+        };
+        var accountingPaymentService = new PaymentReturningAccountingPaymentService(PaymentStatus.Processing);
+        using var poller = new PayjoinReceiverPoller(
+            testContext.CreateStore(),
+            sessionProcessor,
+            accountingBridgeService,
+            accountingPaymentService,
+            logger);
+
+        // Act
+        await poller.ProcessTickOnceAsync(CancellationToken.None).ConfigureAwait(true);
+
+        // Assert
+        Assert.Equal(1, accountingPaymentService.ReconcileInvocationCount);
+        Assert.Equal(0, accountingBridgeService.MarkReconciledInvocationCount);
+        Assert.Contains(logger.Entries, entry => entry.EventId == new EventId(4, "LogPayjoinAccountingBridgeAwaitingPaymentSettlement"));
+    }
+
+    [Fact]
+    public async Task ProcessTickOnceAsyncMarksBridgeReconciledWhenReconciledPaymentIsSettled()
+    {
+        // Arrange
+        using var testContext = new TestContext();
+        var sessionProcessor = new RecordingSessionProcessor();
+        var accountingBridgeService = new RecordingAccountingBridgeService
+        {
+            PendingBridges = [CreatePendingBridge("invoice-settled")]
+        };
+        var accountingPaymentService = new PaymentReturningAccountingPaymentService(PaymentStatus.Settled);
+        using var poller = new PayjoinReceiverPoller(
+            testContext.CreateStore(),
+            sessionProcessor,
+            accountingBridgeService,
+            accountingPaymentService,
+            new TestLogger<PayjoinReceiverPoller>());
+
+        // Act
+        await poller.ProcessTickOnceAsync(CancellationToken.None).ConfigureAwait(true);
+
+        // Assert
+        Assert.Equal(1, accountingPaymentService.ReconcileInvocationCount);
+        Assert.Equal(1, accountingBridgeService.MarkReconciledInvocationCount);
+        Assert.Equal("invoice-settled", accountingBridgeService.LastMarkedReconciledInvoiceId);
+    }
+
+    [Fact]
     public async Task ProcessTickOnceAsyncMarksBridgeFailedWhenReconciliationDataIsInvalid()
     {
         // Arrange
@@ -254,6 +310,8 @@ public class PayjoinReceiverPollerTests
         public IReadOnlyCollection<PayjoinAccountingBridgeState> PendingBridges { get; init; } = [];
         public string? LastMarkedFailedInvoiceId { get; private set; }
         public string? LastMarkedFailedMessage { get; private set; }
+        public int MarkReconciledInvocationCount { get; private set; }
+        public string? LastMarkedReconciledInvoiceId { get; private set; }
 
         public Task<PayjoinAccountingBridgeState> CreateOrGetAsync(CreatePayjoinAccountingBridgeRequest request, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<PayjoinAccountingBridgeState?> TryGetByInvoiceIdAsync(string invoiceId, CancellationToken cancellationToken) => Task.FromResult<PayjoinAccountingBridgeState?>(null);
@@ -265,7 +323,12 @@ public class PayjoinReceiverPollerTests
         public Task<PayjoinAccountingBridgeState?> AttachFallbackAsync(string invoiceId, string fallbackTransactionId, long fallbackOutputIndex, long fallbackValueSats, long effectiveInvoiceValueSats, string? settlementScript, CancellationToken cancellationToken) => Task.FromResult<PayjoinAccountingBridgeState?>(null);
         public Task<PayjoinAccountingBridgeState?> SetSettlementScriptAsync(string invoiceId, string settlementScript, CancellationToken cancellationToken) => Task.FromResult<PayjoinAccountingBridgeState?>(null);
         public Task<PayjoinAccountingBridgeState?> SetExpectedFinalTransactionAsync(string invoiceId, string expectedFinalTransactionId, long? expectedFinalOutputIndex, long? expectedFinalValueSats, CancellationToken cancellationToken) => Task.FromResult<PayjoinAccountingBridgeState?>(null);
-        public Task<PayjoinAccountingBridgeState?> MarkReconciledAsync(string invoiceId, string? expectedFinalTransactionId, long? expectedFinalOutputIndex, long? expectedFinalValueSats, DateTimeOffset reconciledAt, CancellationToken cancellationToken) => Task.FromResult<PayjoinAccountingBridgeState?>(null);
+        public Task<PayjoinAccountingBridgeState?> MarkReconciledAsync(string invoiceId, string? expectedFinalTransactionId, long? expectedFinalOutputIndex, long? expectedFinalValueSats, DateTimeOffset reconciledAt, CancellationToken cancellationToken)
+        {
+            MarkReconciledInvocationCount++;
+            LastMarkedReconciledInvoiceId = invoiceId;
+            return Task.FromResult<PayjoinAccountingBridgeState?>(null);
+        }
         public Task<PayjoinAccountingBridgeState?> MarkFailedAsync(string invoiceId, string failureMessage, CancellationToken cancellationToken)
         {
             LastMarkedFailedInvoiceId = invoiceId;
@@ -288,6 +351,51 @@ public class PayjoinReceiverPollerTests
             ReconcileInvocationCount++;
             return Task.FromResult<BTCPayServer.Services.Invoices.PaymentEntity?>(null);
         }
+    }
+
+    private sealed class PaymentReturningAccountingPaymentService : IPayjoinAccountingPaymentService
+    {
+        private readonly PaymentStatus _paymentStatus;
+
+        public PaymentReturningAccountingPaymentService(PaymentStatus paymentStatus)
+        {
+            _paymentStatus = paymentStatus;
+        }
+
+        public int ReconcileInvocationCount { get; private set; }
+
+        public Task<BTCPayServer.Services.Invoices.PaymentEntity?> ReconcileWithFinalTransactionAsync(PayjoinAccountingBridgeState bridge, CancellationToken cancellationToken)
+        {
+            ReconcileInvocationCount++;
+            return Task.FromResult<BTCPayServer.Services.Invoices.PaymentEntity?>(new BTCPayServer.Services.Invoices.PaymentEntity
+            {
+                Status = _paymentStatus
+            });
+        }
+    }
+
+    private static PayjoinAccountingBridgeState CreatePendingBridge(string invoiceId)
+    {
+        return new PayjoinAccountingBridgeState(
+            1,
+            invoiceId,
+            "store-1",
+            PayjoinConstants.BitcoinCode,
+            "BTC-BTC",
+            null,
+            null,
+            null,
+            null,
+            null,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            null,
+            null,
+            null,
+            Data.PayjoinAccountingBridgeStatus.PendingFinalTransaction,
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            null,
+            DateTimeOffset.UtcNow.AddMinutes(5));
     }
 
     private sealed class ThrowingAccountingPaymentService : IPayjoinAccountingPaymentService
