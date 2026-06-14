@@ -11,13 +11,19 @@ internal sealed class PayjoinReceiverStateProcessor : IPayjoinReceiverStateProce
 {
     private readonly PayjoinReceiverSessionStore _sessionStore;
     private readonly IPayjoinReceiverRelayClient _relayClient;
+    private readonly IPayjoinWalletOwnershipService _walletOwnershipService;
+    private readonly PayjoinSeenInputStore _seenInputStore;
 
     public PayjoinReceiverStateProcessor(
         PayjoinReceiverSessionStore sessionStore,
-        IPayjoinReceiverRelayClient relayClient)
+        IPayjoinReceiverRelayClient relayClient,
+        IPayjoinWalletOwnershipService walletOwnershipService,
+        PayjoinSeenInputStore seenInputStore)
     {
         _sessionStore = sessionStore;
         _relayClient = relayClient;
+        _walletOwnershipService = walletOwnershipService;
+        _seenInputStore = seenInputStore;
     }
 
     public async Task ProcessInitializedAsync(
@@ -90,7 +96,8 @@ internal sealed class PayjoinReceiverStateProcessor : IPayjoinReceiverStateProce
         Func<WantsOutputs, PayjoinReceiverStateContext, CancellationToken, Task> continueWithOutputsAsync,
         CancellationToken cancellationToken)
     {
-        using var transition = proposal.CheckInputsNotOwned(new ReceiverScriptOwnedCallback(context.ReceiverScript));
+        var ownershipResolver = await _walletOwnershipService.CreateResolverAsync(context.StoreId, context.ReceiverScript, cancellationToken).ConfigureAwait(false);
+        using var transition = proposal.CheckInputsNotOwned(new WalletScriptOwnedCallback(ownershipResolver));
         using var maybeInputsSeen = transition.Save(context.Persister);
         await ProcessMaybeInputsSeenAsync(context, maybeInputsSeen, continueWithOutputsAsync, cancellationToken).ConfigureAwait(false);
     }
@@ -101,7 +108,7 @@ internal sealed class PayjoinReceiverStateProcessor : IPayjoinReceiverStateProce
         Func<WantsOutputs, PayjoinReceiverStateContext, CancellationToken, Task> continueWithOutputsAsync,
         CancellationToken cancellationToken)
     {
-        using var transition = proposal.CheckNoInputsSeenBefore(new NoInputsSeenCallback());
+        using var transition = proposal.CheckNoInputsSeenBefore(new PersistentInputsSeenCallback(_seenInputStore));
         using var outputsUnknown = transition.Save(context.Persister);
         await ProcessOutputsUnknownAsync(context, outputsUnknown, continueWithOutputsAsync, cancellationToken).ConfigureAwait(false);
     }
@@ -112,7 +119,8 @@ internal sealed class PayjoinReceiverStateProcessor : IPayjoinReceiverStateProce
         Func<WantsOutputs, PayjoinReceiverStateContext, CancellationToken, Task> continueWithOutputsAsync,
         CancellationToken cancellationToken)
     {
-        using var transition = proposal.IdentifyReceiverOutputs(new ReceiverScriptOwnedCallback(context.ReceiverScript));
+        var ownershipResolver = await _walletOwnershipService.CreateResolverAsync(context.StoreId, context.ReceiverScript, cancellationToken).ConfigureAwait(false);
+        using var transition = proposal.IdentifyReceiverOutputs(new WalletScriptOwnedCallback(ownershipResolver));
         using var wantsOutputs = transition.Save(context.Persister);
         await continueWithOutputsAsync(wantsOutputs, context, cancellationToken).ConfigureAwait(false);
     }
@@ -171,23 +179,34 @@ internal sealed class PayjoinReceiverStateProcessor : IPayjoinReceiverStateProce
         return true;
     }
 
-    // TODO: Load all wallet-owned scripts from the store's derivation scheme and check the incoming script against that full set.
-    internal sealed class ReceiverScriptOwnedCallback : IsScriptOwned
+    // Checks an input/output script against the store's full derivation scheme (not just the single
+    // invoice address) so a sender cannot slip in a receiver-owned input or have a receiver output
+    // misclassified as the sender's.
+    internal sealed class WalletScriptOwnedCallback : IsScriptOwned
     {
-        private readonly byte[] _script;
+        private readonly PayjoinScriptOwnershipResolver _resolver;
 
-        public ReceiverScriptOwnedCallback(byte[] script)
+        public WalletScriptOwnedCallback(PayjoinScriptOwnershipResolver resolver)
         {
-            _script = script;
+            _resolver = resolver;
         }
 
-        public bool Callback(byte[] script) => script.AsSpan().SequenceEqual(_script);
+        public bool Callback(byte[] script) => _resolver.IsOwned(script);
     }
 
-    // TODO: Implement a persistent store of seen outpoints and check against it here.
-    internal sealed class NoInputsSeenCallback : IsOutputKnown
+    // Records every inspected outpoint and reports whether it had been seen before, rejecting probing
+    // attempts and re-entrant payjoins that replay a prior proposal's inputs.
+    internal sealed class PersistentInputsSeenCallback : IsOutputKnown
     {
-        public bool Callback(OutPoint _outpoint) => false;
+        private readonly PayjoinSeenInputStore _seenInputStore;
+
+        public PersistentInputsSeenCallback(PayjoinSeenInputStore seenInputStore)
+        {
+            _seenInputStore = seenInputStore;
+        }
+
+        public bool Callback(OutPoint outpoint) =>
+            _seenInputStore.MarkSeenAndWasPresent(outpoint.txid, checked((long)outpoint.vout));
     }
 
     internal sealed class CloseRequestedBroadcastGuard : CanBroadcast
