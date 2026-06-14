@@ -34,8 +34,10 @@ internal sealed class PayjoinReceiverProposalFinalizer : IPayjoinReceiverProposa
         ReceivedCoin[] receiverCoins,
         CancellationToken cancellationToken)
     {
-        // TODO: Replace hardcoded fee range with values from NBXplorer fee estimation.
-        using var transition = proposal.ApplyFeeRange(1, 10);
+        // Inherit the receiver session's configured max effective fee rate (set on the ReceiverBuilder) and
+        // let the minimum default to the relay floor, rather than forcing an artificial 1-10 sat/vB window
+        // that fails in higher-fee environments. See PayjoinUriSessionService.DefaultMaxEffectiveFeeRateSatPerVb.
+        using var transition = proposal.ApplyFeeRange(null, null);
         using var provisional = transition.Save(context.Persister);
         await FinalizeAsync(context, provisional, receiverCoins, cancellationToken).ConfigureAwait(false);
     }
