@@ -79,11 +79,9 @@ internal sealed class PayjoinReceiverProposalSigner : IPayjoinReceiverProposalSi
         EnsureContributedInputsPresent(proposalPsbt, receiverCoins);
         derivationScheme.RebaseKeyPaths(proposalPsbt);
         proposalPsbt.RebaseKeyPaths(signingKeySettings.AccountKey, rootedKeyPath);
+
         proposalPsbt.SignAll(derivationScheme.AccountDerivation, accountKey, rootedKeyPath);
-        FinalizeContributedInputs(proposalPsbt, receiverCoins);
-        ClearSenderInputFinalization(proposalPsbt, receiverCoins);
-        ClearPartialSignatures(proposalPsbt);
-        ClearHdKeyPaths(proposalPsbt);
+        NormalizeContributedProposalSignatures(proposalPsbt, receiverCoins);
 
         return proposalPsbt.ToBase64();
     }
@@ -103,9 +101,22 @@ internal sealed class PayjoinReceiverProposalSigner : IPayjoinReceiverProposalSi
         throw new InvalidOperationException($"Provisional proposal is missing contributed receiver inputs: {string.Join(", ", missingInputs)}");
     }
 
+    // Enforces the invariant that the proposal returned to the sender carries signature material only on the
+    // receiver's own contributed inputs. SignAll may sign any wallet-owned input, so this finalizes the
+    // contributed inputs, strips finalized scriptSig/witness from every other input, and clears all partial
+    // signatures and key paths. After this runs, no signature survives on a sender (or any non-contributed)
+    // input. The individual steps are covered by ClearSenderInputFinalizationClearsOnlySenderInputs,
+    // ClearPartialSignaturesRemovesAllPartialSigs, and ClearHdKeyPathsRemovesAllInputAndOutputKeyPaths.
+    internal static void NormalizeContributedProposalSignatures(PSBT proposalPsbt, ReceivedCoin[] receiverCoins)
+    {
+        FinalizeContributedInputs(proposalPsbt, receiverCoins);
+        ClearSenderInputFinalization(proposalPsbt, receiverCoins);
+        ClearPartialSignatures(proposalPsbt);
+        ClearHdKeyPaths(proposalPsbt);
+    }
+
     private static void FinalizeContributedInputs(PSBT proposalPsbt, ReceivedCoin[] receiverCoins)
     {
-        // TODO: Collapse the receiver-input finalization and sender-input cleanup steps into a single proposal-normalization pipeline if this PSBT policy grows further.
         foreach (var input in proposalPsbt.Inputs)
         {
             if (!IsContributedReceiverInput(input.PrevOut, receiverCoins))

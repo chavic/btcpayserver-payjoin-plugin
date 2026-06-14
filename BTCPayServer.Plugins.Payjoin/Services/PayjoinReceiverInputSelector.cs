@@ -3,6 +3,7 @@ using Payjoin;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -31,15 +32,17 @@ internal sealed class PayjoinReceiverInputSelector : IPayjoinReceiverInputSelect
         DateTimeOffset reservationExpiresAt,
         CancellationToken cancellationToken)
     {
-        // TODO: Restore `proposal.TryPreservingPrivacy(receiverInputs)` only after rust-payjoin/payjoin-ffi lets us identify which `ReceivedCoin` was actually selected.
-        // TODO: Persist only the truly contributed coin(s) into `contributedCoins`; otherwise the signing step can treat unrelated wallet inputs as receiver-owned and produce an invalid proposal.
+        // rust-payjoin's TryPreservingPrivacy returns an opaque InputPair that the FFI does not let us map back
+        // to the ReceivedCoin we need for reservation and signing, so selection cannot be delegated to it yet.
+        // Until the FFI exposes the chosen coin (or accepts an index), pick a candidate at random instead of a
+        // deterministic smallest-first order: always contributing the smallest input systematically reproduces
+        // the Unnecessary Input Heuristic 2 fingerprint (smallest input below the smallest output) and reveals
+        // the payjoin. Random selection removes that worst-case bias while keeping the coin identity we need.
         var (receiverInputs, receiverCoins) = await GetReceiverInputsAsync(storeId, cancellationToken).ConfigureAwait(false);
 
         var contributionFailures = new List<string>();
-        var orderedCandidates = receiverCoins
-            .Select((coin, index) => new { coin, index })
-            .OrderBy(x => x.coin.Coin.Amount.Satoshi)
-            .Select(x => x.index);
+        var orderedCandidates = Enumerable.Range(0, receiverCoins.Length).ToArray();
+        ShuffleSecurely(orderedCandidates);
 
         foreach (var index in orderedCandidates)
         {
@@ -91,6 +94,17 @@ internal sealed class PayjoinReceiverInputSelector : IPayjoinReceiverInputSelect
             .Where(coin => coin.OutPoint.Hash == contributedOutPoint.Hash && coin.OutPoint.N == contributedOutPoint.N)
             .ToArray();
         return contributedCoins.Length > 0 ? contributedCoins : null;
+    }
+
+    private static void ShuffleSecurely(int[] values)
+    {
+        // Fisher-Yates with a cryptographically secure RNG: which receiver UTXO is contributed is
+        // privacy-sensitive, so the selection order must not be predictable by the sender.
+        for (var i = values.Length - 1; i > 0; i--)
+        {
+            var j = RandomNumberGenerator.GetInt32(i + 1);
+            (values[i], values[j]) = (values[j], values[i]);
+        }
     }
 
     private async Task<(InputPair[] Inputs, ReceivedCoin[] Coins)> GetReceiverInputsAsync(
