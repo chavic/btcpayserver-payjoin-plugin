@@ -1,7 +1,6 @@
 using BTCPayServer.Client.Models;
 using BTCPayServer.Plugins.Payjoin.Services;
 using Xunit;
-using Payjoin;
 using SystemUri = System.Uri;
 
 namespace BTCPayServer.Plugins.Payjoin.Tests.Services;
@@ -9,27 +8,14 @@ namespace BTCPayServer.Plugins.Payjoin.Tests.Services;
 public class PayjoinReceiverStateProcessorTests
 {
     [Fact]
-    public void ReceiverScriptOwnedCallbackMatchesExpectedScript()
+    public void OwnershipResolverTreatsInvoiceReceiverScriptAsOwned()
     {
-        var callback = new PayjoinReceiverStateProcessor.ReceiverScriptOwnedCallback(new byte[] { 0x01, 0x02, 0x03 });
+        // The invoice's own receiver script is always owned without needing a wallet lookup, so the
+        // explorer client and derivation are never touched for this fast path.
+        var receiverScript = new byte[] { 0x01, 0x02, 0x03 };
+        var resolver = new PayjoinScriptOwnershipResolver(client: null!, accountDerivation: null!, receiverScript);
 
-        var matching = callback.Callback(new byte[] { 0x01, 0x02, 0x03 });
-        var nonMatching = callback.Callback(new byte[] { 0x01, 0x02 });
-
-        Assert.True(matching);
-        Assert.False(nonMatching);
-    }
-
-    [Fact]
-    public void NoInputsSeenCallbackAlwaysReturnsFalse()
-    {
-        var callback = new PayjoinReceiverStateProcessor.NoInputsSeenCallback();
-
-        var first = callback.Callback(new OutPoint("1111111111111111111111111111111111111111111111111111111111111111", 0));
-        var second = callback.Callback(new OutPoint("2222222222222222222222222222222222222222222222222222222222222222", 1));
-
-        Assert.False(first);
-        Assert.False(second);
+        Assert.True(resolver.IsOwned(new byte[] { 0x01, 0x02, 0x03 }));
     }
 
     [Fact]
