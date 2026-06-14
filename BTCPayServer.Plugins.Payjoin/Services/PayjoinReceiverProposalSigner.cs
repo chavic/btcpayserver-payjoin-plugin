@@ -77,13 +77,25 @@ internal sealed class PayjoinReceiverProposalSigner : IPayjoinReceiverProposalSi
         }
 
         EnsureContributedInputsPresent(proposalPsbt, receiverCoins);
-        derivationScheme.RebaseKeyPaths(proposalPsbt);
-        proposalPsbt.RebaseKeyPaths(signingKeySettings.AccountKey, rootedKeyPath);
-        proposalPsbt.SignAll(derivationScheme.AccountDerivation, accountKey, rootedKeyPath);
-        FinalizeContributedInputs(proposalPsbt, receiverCoins);
-        ClearSenderInputFinalization(proposalPsbt, receiverCoins);
-        ClearPartialSignatures(proposalPsbt);
-        ClearHdKeyPaths(proposalPsbt);
+
+        // Sign only the receiver's own contributed inputs, each addressed by its outpoint and signed with the
+        // key derived from that coin's key path. This replaces a SignAll over the whole derivation, which would
+        // sign every wallet-owned input the receiver has keys for — including any the sender placed in the
+        // original — and then rely on later cleanup to strip those signatures back out. Signing only the
+        // contributed inputs makes that guarantee structural; it mirrors BTCPayServer's core payjoin endpoint,
+        // which signs each selected UTXO individually.
+        foreach (var coin in receiverCoins)
+        {
+            var contributedInput = proposalPsbt.Inputs.FindIndexedInput(coin.OutPoint);
+            if (contributedInput is null)
+            {
+                continue;
+            }
+
+            contributedInput.Sign(accountKey.Derive(coin.KeyPath).PrivateKey);
+        }
+
+        NormalizeContributedProposalSignatures(proposalPsbt, receiverCoins);
 
         return proposalPsbt.ToBase64();
     }
@@ -103,9 +115,22 @@ internal sealed class PayjoinReceiverProposalSigner : IPayjoinReceiverProposalSi
         throw new InvalidOperationException($"Provisional proposal is missing contributed receiver inputs: {string.Join(", ", missingInputs)}");
     }
 
+    // Enforces the invariant that the proposal returned to the sender carries signature material only on the
+    // receiver's own contributed inputs. SignAll may sign any wallet-owned input, so this finalizes the
+    // contributed inputs, strips finalized scriptSig/witness from every other input, and clears all partial
+    // signatures and key paths. After this runs, no signature survives on a sender (or any non-contributed)
+    // input. The individual steps are covered by ClearSenderInputFinalizationClearsOnlySenderInputs,
+    // ClearPartialSignaturesRemovesAllPartialSigs, and ClearHdKeyPathsRemovesAllInputAndOutputKeyPaths.
+    internal static void NormalizeContributedProposalSignatures(PSBT proposalPsbt, ReceivedCoin[] receiverCoins)
+    {
+        FinalizeContributedInputs(proposalPsbt, receiverCoins);
+        ClearSenderInputFinalization(proposalPsbt, receiverCoins);
+        ClearPartialSignatures(proposalPsbt);
+        ClearHdKeyPaths(proposalPsbt);
+    }
+
     private static void FinalizeContributedInputs(PSBT proposalPsbt, ReceivedCoin[] receiverCoins)
     {
-        // TODO: Collapse the receiver-input finalization and sender-input cleanup steps into a single proposal-normalization pipeline if this PSBT policy grows further.
         foreach (var input in proposalPsbt.Inputs)
         {
             if (!IsContributedReceiverInput(input.PrevOut, receiverCoins))
