@@ -137,7 +137,7 @@ public sealed class PayjoinUriSessionService
             if (session is null)
             {
                 var bootstrapPersister = new BufferedReceiverSessionPersister();
-                InitializeSession(destination, due, directoryUrl, ohttpKeys, bootstrapPersister);
+                InitializeSession(destination, due, directoryUrl, ohttpKeys, monitoringExpiresAt, bootstrapPersister);
                 session = _receiverSessionStore.CreateSession(
                     invoiceId,
                     destination,
@@ -175,18 +175,41 @@ public sealed class PayjoinUriSessionService
         }
     }
 
+    // TODO (M1 follow-up): replace this fixed cap with NBXplorer fee estimation and/or a per-store setting.
+    // The receiver only pays the additional fee on its own contributed input/output, so a generous cap
+    // avoids silently failing payjoin in high-fee environments while bounding griefing to that contribution.
+    private const ulong DefaultMaxEffectiveFeeRateSatPerVb = 1000;
+
     private static void InitializeSession(
         string destination,
         decimal due,
         string directoryUrl,
         OhttpKeys ohttpKeys,
+        DateTimeOffset monitoringExpiresAt,
         JsonReceiverSessionPersister persister)
     {
         var amountSats = checked((ulong)Money.Coins(due).Satoshi);
+        var expirationSecs = ToExpirationSeconds(monitoringExpiresAt);
         using var receiverBuilder = new ReceiverBuilder(destination, directoryUrl, ohttpKeys);
         using var builderWithAmount = receiverBuilder.WithAmount(amountSats);
-        using var transition = builderWithAmount.Build();
+        using var builderWithExpiration = builderWithAmount.WithExpiration(expirationSecs);
+        using var builderWithMaxFeeRate = builderWithExpiration.WithMaxFeeRate(DefaultMaxEffectiveFeeRateSatPerVb);
+        using var transition = builderWithMaxFeeRate.Build();
         using var savedSession = transition.Save(persister);
+    }
+
+    internal static ulong ToExpirationSeconds(DateTimeOffset monitoringExpiresAt)
+    {
+        // Align the protocol session expiry with BTCPay's invoice monitoring window so the rust-payjoin
+        // session does not expire independently (its 24h default) from the receiver's own cleanup deadline.
+        // The FFI validates expiration against u32::MAX, so clamp accordingly.
+        var remainingSeconds = (monitoringExpiresAt - DateTimeOffset.UtcNow).TotalSeconds;
+        if (remainingSeconds < 1d)
+        {
+            return 1UL;
+        }
+
+        return (ulong)Math.Min(remainingSeconds, uint.MaxValue);
     }
 
     private Task EnsureAccountingBridgeAsync(
