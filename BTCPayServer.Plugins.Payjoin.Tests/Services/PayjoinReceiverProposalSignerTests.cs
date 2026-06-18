@@ -59,67 +59,6 @@ public class PayjoinReceiverProposalSignerTests
         Assert.Contains(missingOutPoint2.ToString(), exception.Message, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void ClearSenderInputFinalizationClearsOnlySenderInputs()
-    {
-        // Arrange
-        var receiverOutPoint = new OutPoint(uint256.Parse("4444444444444444444444444444444444444444444444444444444444444444"), 0);
-        var senderOutPoint = new OutPoint(uint256.Parse("5555555555555555555555555555555555555555555555555555555555555555"), 1);
-        var psbt = CreatePsbtWithInputs(receiverOutPoint, senderOutPoint);
-        psbt.Inputs[0].FinalScriptSig = Script.Empty;
-        psbt.Inputs[0].FinalScriptWitness = WitScript.Empty;
-        psbt.Inputs[1].FinalScriptSig = Script.Empty;
-        psbt.Inputs[1].FinalScriptWitness = WitScript.Empty;
-        var receivedCoins = new[] { CreateReceivedCoin(receiverOutPoint, Money.Satoshis(20_000), CreateScript(3)) };
-
-        // Act
-        PayjoinReceiverProposalSigner.ClearSenderInputFinalization(psbt, receivedCoins);
-
-        // Assert
-        Assert.NotNull(psbt.Inputs[0].FinalScriptSig);
-        Assert.NotNull(psbt.Inputs[0].FinalScriptWitness);
-        Assert.Null(psbt.Inputs[1].FinalScriptSig);
-        Assert.Null(psbt.Inputs[1].FinalScriptWitness);
-    }
-
-    [Fact]
-    public void ClearPartialSignaturesRemovesAllPartialSigs()
-    {
-        // Arrange
-        var psbt = CreatePsbtWithInputs(
-            new OutPoint(uint256.Parse("6666666666666666666666666666666666666666666666666666666666666666"), 0),
-            new OutPoint(uint256.Parse("7777777777777777777777777777777777777777777777777777777777777777"), 1));
-        using var key1 = new Key();
-        using var key2 = new Key();
-        psbt.Inputs[0].PartialSigs.Add(key1.PubKey, new TransactionSignature(key1.Sign(uint256.One), SigHash.All));
-        psbt.Inputs[1].PartialSigs.Add(key2.PubKey, new TransactionSignature(key2.Sign(uint256.One), SigHash.All));
-
-        // Act
-        PayjoinReceiverProposalSigner.ClearPartialSignatures(psbt);
-
-        // Assert
-        Assert.Empty(psbt.Inputs[0].PartialSigs);
-        Assert.Empty(psbt.Inputs[1].PartialSigs);
-    }
-
-    [Fact]
-    public void ClearHdKeyPathsRemovesAllInputAndOutputKeyPaths()
-    {
-        // Arrange
-        var psbt = CreatePsbtWithInputs(new OutPoint(uint256.Parse("8888888888888888888888888888888888888888888888888888888888888888"), 0));
-        using var key = new Key();
-        var fingerprint = new HDFingerprint(new byte[] { 1, 2, 3, 4 });
-        psbt.Inputs[0].HDKeyPaths.Add(key.PubKey, new RootedKeyPath(fingerprint, new KeyPath("0/0")));
-        psbt.Outputs[0].HDKeyPaths.Add(key.PubKey, new RootedKeyPath(fingerprint, new KeyPath("1/0")));
-
-        // Act
-        PayjoinReceiverProposalSigner.ClearHdKeyPaths(psbt);
-
-        // Assert
-        Assert.Empty(psbt.Inputs[0].HDKeyPaths);
-        Assert.Empty(psbt.Outputs[0].HDKeyPaths);
-    }
-
     private static PSBT CreatePsbtWithInputs(params OutPoint[] outPoints)
     {
         var network = Network.RegTest;

@@ -32,8 +32,7 @@ internal sealed class PayjoinReceiverProposalSigner : IPayjoinReceiverProposalSi
         _explorerClientProvider = explorerClientProvider;
     }
 
-    public async Task<string> SignProposalAsync(
-        ProvisionalProposal proposal,
+    public async Task<ProcessPsbt> CreateContributedInputSignerAsync(
         string storeId,
         ReceivedCoin[] receiverCoins,
         CancellationToken cancellationToken)
@@ -63,41 +62,8 @@ internal sealed class PayjoinReceiverProposalSigner : IPayjoinReceiverProposalSi
         var signingKeySettings = derivationScheme.GetAccountKeySettingsFromRoot(signingKey) ?? throw new InvalidOperationException("Wallet key settings not available");
         var rootedKeyPath = signingKeySettings.GetRootedKeyPath() ?? throw new InvalidOperationException("Wallet key path mismatch");
         var accountKey = signingKey.Derive(rootedKeyPath.KeyPath);
-        var psbtToSign = proposal.PsbtToSign();
-        var proposalPsbt = PSBT.Parse(psbtToSign, network.NBitcoinNetwork);
 
-        var updated = await client.UpdatePSBTAsync(new NBXplorer.Models.UpdatePSBTRequest
-        {
-            PSBT = proposalPsbt,
-            DerivationScheme = derivationScheme.AccountDerivation
-        }, cancellationToken).ConfigureAwait(false);
-        if (updated?.PSBT is not null)
-        {
-            proposalPsbt = updated.PSBT;
-        }
-
-        EnsureContributedInputsPresent(proposalPsbt, receiverCoins);
-
-        // Sign only the receiver's own contributed inputs, each addressed by its outpoint and signed with the
-        // key derived from that coin's key path. This replaces a SignAll over the whole derivation, which would
-        // sign every wallet-owned input the receiver has keys for — including any the sender placed in the
-        // original — and then rely on later cleanup to strip those signatures back out. Signing only the
-        // contributed inputs makes that guarantee structural; it mirrors BTCPayServer's core payjoin endpoint,
-        // which signs each selected UTXO individually.
-        foreach (var coin in receiverCoins)
-        {
-            var contributedInput = proposalPsbt.Inputs.FindIndexedInput(coin.OutPoint);
-            if (contributedInput is null)
-            {
-                continue;
-            }
-
-            contributedInput.Sign(accountKey.Derive(coin.KeyPath).PrivateKey);
-        }
-
-        NormalizeContributedProposalSignatures(proposalPsbt, receiverCoins);
-
-        return proposalPsbt.ToBase64();
+        return new ContributedInputSigner(network.NBitcoinNetwork, accountKey, receiverCoins);
     }
 
     public static void EnsureContributedInputsPresent(PSBT proposalPsbt, ReceivedCoin[] receiverCoins)
@@ -115,73 +81,46 @@ internal sealed class PayjoinReceiverProposalSigner : IPayjoinReceiverProposalSi
         throw new InvalidOperationException($"Provisional proposal is missing contributed receiver inputs: {string.Join(", ", missingInputs)}");
     }
 
-    // Enforces the invariant that the proposal returned to the sender carries signature material only on the
-    // receiver's own contributed inputs. SignAll may sign any wallet-owned input, so this finalizes the
-    // contributed inputs, strips finalized scriptSig/witness from every other input, and clears all partial
-    // signatures and key paths. After this runs, no signature survives on a sender (or any non-contributed)
-    // input. The individual steps are covered by ClearSenderInputFinalizationClearsOnlySenderInputs,
-    // ClearPartialSignaturesRemovesAllPartialSigs, and ClearHdKeyPathsRemovesAllInputAndOutputKeyPaths.
-    internal static void NormalizeContributedProposalSignatures(PSBT proposalPsbt, ReceivedCoin[] receiverCoins)
+    // Signs only the receiver's contributed inputs on the PSBT that rust-payjoin hands to the wallet during
+    // finalize_proposal. That PSBT already has the sender's now-invalid signatures cleared by the library
+    // (psbt_to_sign), and the library's prepare_psbt drops partial signatures and key paths afterwards. So the
+    // receiver never signs a foreign input and no manual stripping is required. The account key is resolved
+    // ahead of time (CreateContributedInputSignerAsync) because this callback is synchronous.
+    internal sealed class ContributedInputSigner : ProcessPsbt
     {
-        FinalizeContributedInputs(proposalPsbt, receiverCoins);
-        ClearSenderInputFinalization(proposalPsbt, receiverCoins);
-        ClearPartialSignatures(proposalPsbt);
-        ClearHdKeyPaths(proposalPsbt);
-    }
+        private readonly Network _network;
+        private readonly ExtKey _accountKey;
+        private readonly ReceivedCoin[] _receiverCoins;
 
-    private static void FinalizeContributedInputs(PSBT proposalPsbt, ReceivedCoin[] receiverCoins)
-    {
-        foreach (var input in proposalPsbt.Inputs)
+        public ContributedInputSigner(Network network, ExtKey accountKey, ReceivedCoin[] receiverCoins)
         {
-            if (!IsContributedReceiverInput(input.PrevOut, receiverCoins))
+            _network = network;
+            _accountKey = accountKey;
+            _receiverCoins = receiverCoins;
+        }
+
+        public string Callback(string psbt)
+        {
+            var proposalPsbt = PSBT.Parse(psbt, _network);
+            EnsureContributedInputsPresent(proposalPsbt, _receiverCoins);
+
+            foreach (var coin in _receiverCoins)
             {
-                continue;
+                var contributedInput = proposalPsbt.Inputs.FindIndexedInput(coin.OutPoint);
+                if (contributedInput is null)
+                {
+                    continue;
+                }
+
+                contributedInput.UpdateFromCoin(coin.Coin);
+                contributedInput.Sign(_accountKey.Derive(coin.KeyPath).PrivateKey);
+                if (!contributedInput.TryFinalizeInput(out _))
+                {
+                    throw new InvalidOperationException($"Receiver input '{coin.OutPoint}' could not be finalized.");
+                }
             }
 
-            if (!input.TryFinalizeInput(out _))
-            {
-                throw new InvalidOperationException($"Receiver input '{input.PrevOut}' could not be finalized.");
-            }
-        }
-    }
-
-    public static void ClearSenderInputFinalization(PSBT proposalPsbt, ReceivedCoin[] receiverCoins)
-    {
-        foreach (var input in proposalPsbt.Inputs)
-        {
-            if (IsContributedReceiverInput(input.PrevOut, receiverCoins))
-            {
-                continue;
-            }
-
-            input.FinalScriptSig = null;
-            input.FinalScriptWitness = null;
-        }
-    }
-
-    private static bool IsContributedReceiverInput(NBitcoin.OutPoint prevOut, ReceivedCoin[] receiverCoins)
-    {
-        return receiverCoins.Any(receiverCoin => receiverCoin.OutPoint == prevOut);
-    }
-
-    public static void ClearPartialSignatures(PSBT proposalPsbt)
-    {
-        foreach (var input in proposalPsbt.Inputs)
-        {
-            input.PartialSigs.Clear();
-        }
-    }
-
-    public static void ClearHdKeyPaths(PSBT proposalPsbt)
-    {
-        foreach (var input in proposalPsbt.Inputs)
-        {
-            input.HDKeyPaths.Clear();
-        }
-
-        foreach (var output in proposalPsbt.Outputs)
-        {
-            output.HDKeyPaths.Clear();
+            return proposalPsbt.ToBase64();
         }
     }
 }
