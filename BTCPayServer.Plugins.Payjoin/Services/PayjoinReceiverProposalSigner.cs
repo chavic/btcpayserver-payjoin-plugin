@@ -106,11 +106,7 @@ internal sealed class PayjoinReceiverProposalSigner : IPayjoinReceiverProposalSi
 
             foreach (var coin in _receiverCoins)
             {
-                var contributedInput = proposalPsbt.Inputs.FindIndexedInput(coin.OutPoint);
-                if (contributedInput is null)
-                {
-                    continue;
-                }
+                var contributedInput = proposalPsbt.Inputs.FindIndexedInput(coin.OutPoint)!;
 
                 contributedInput.UpdateFromCoin(coin.Coin);
                 contributedInput.Sign(_accountKey.Derive(coin.KeyPath).PrivateKey);

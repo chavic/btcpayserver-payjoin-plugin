@@ -59,6 +59,75 @@ public class PayjoinReceiverProposalSignerTests
         Assert.Contains(missingOutPoint2.ToString(), exception.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ContributedInputSignerSignsOnlyContributedInputs()
+    {
+        // Arrange: a proposal PSBT with one receiver-contributed input and one sender input.
+        var network = Network.RegTest;
+        var accountKey = new ExtKey();
+        var keyPath = new KeyPath("0/0");
+        var contributedKey = accountKey.Derive(keyPath).PrivateKey;
+        var contributedScript = contributedKey.PubKey.WitHash.ScriptPubKey;
+        var contributedOutpoint = new OutPoint(uint256.Parse("1111111111111111111111111111111111111111111111111111111111111111"), 0);
+        var senderOutpoint = new OutPoint(uint256.Parse("2222222222222222222222222222222222222222222222222222222222222222"), 1);
+        var psbt = CreatePsbtWithInputs(contributedOutpoint, senderOutpoint);
+        var receivedCoin = CreateReceivedCoin(contributedOutpoint, Money.Coins(1m), contributedScript, keyPath);
+        var signer = new PayjoinReceiverProposalSigner.ContributedInputSigner(network, accountKey, new[] { receivedCoin });
+
+        // Act
+        var signed = PSBT.Parse(signer.Callback(psbt.ToBase64()), network);
+
+        // Assert: the receiver's contributed input is signed and finalized; the sender input is left untouched.
+        var contributed = Assert.Single(signed.Inputs, i => i.PrevOut == contributedOutpoint);
+        var sender = Assert.Single(signed.Inputs, i => i.PrevOut == senderOutpoint);
+        Assert.NotNull(contributed.FinalScriptWitness);
+        Assert.Null(sender.FinalScriptWitness);
+        Assert.Null(sender.FinalScriptSig);
+    }
+
+    [Fact]
+    public void ContributedInputSignerThrowsWhenContributedInputMissing()
+    {
+        // Arrange
+        var network = Network.RegTest;
+        var accountKey = new ExtKey();
+        var keyPath = new KeyPath("0/0");
+        var missingOutpoint = new OutPoint(uint256.Parse("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"), 0);
+        var proposalOutpoint = new OutPoint(uint256.Parse("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"), 1);
+        var script = accountKey.Derive(keyPath).PrivateKey.PubKey.WitHash.ScriptPubKey;
+        var psbt = CreatePsbtWithInputs(proposalOutpoint);
+        var receivedCoin = CreateReceivedCoin(missingOutpoint, Money.Satoshis(50_000), script, keyPath);
+        var signer = new PayjoinReceiverProposalSigner.ContributedInputSigner(network, accountKey, new[] { receivedCoin });
+
+        // Act
+        var exception = Assert.Throws<InvalidOperationException>(() => signer.Callback(psbt.ToBase64()));
+
+        // Assert
+        Assert.Contains(missingOutpoint.ToString(), exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ContributedInputSignerThrowsWhenContributedInputCannotFinalize()
+    {
+        // Arrange
+        var network = Network.RegTest;
+        var accountKey = new ExtKey();
+        var keyPath = new KeyPath("0/0");
+        var contributedOutpoint = new OutPoint(uint256.Parse("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"), 0);
+        using var unrelatedKey = new Key();
+        var unrelatedScript = unrelatedKey.PubKey.WitHash.ScriptPubKey;
+        var psbt = CreatePsbtWithInputs(contributedOutpoint);
+        var receivedCoin = CreateReceivedCoin(contributedOutpoint, Money.Satoshis(50_000), unrelatedScript, keyPath);
+        var signer = new PayjoinReceiverProposalSigner.ContributedInputSigner(network, accountKey, new[] { receivedCoin });
+
+        // Act
+        var exception = Assert.Throws<InvalidOperationException>(() => signer.Callback(psbt.ToBase64()));
+
+        // Assert
+        Assert.Contains("could not be finalized", exception.Message, StringComparison.Ordinal);
+        Assert.Contains(contributedOutpoint.ToString(), exception.Message, StringComparison.Ordinal);
+    }
+
     private static PSBT CreatePsbtWithInputs(params OutPoint[] outPoints)
     {
         var network = Network.RegTest;
@@ -72,12 +141,13 @@ public class PayjoinReceiverProposalSignerTests
         return PSBT.FromTransaction(transaction, network);
     }
 
-    private static ReceivedCoin CreateReceivedCoin(OutPoint outPoint, Money amount, Script scriptPubKey)
+    private static ReceivedCoin CreateReceivedCoin(OutPoint outPoint, Money amount, Script scriptPubKey, KeyPath? keyPath = null)
     {
         return new ReceivedCoin
         {
             OutPoint = outPoint,
             ScriptPubKey = scriptPubKey,
+            KeyPath = keyPath ?? KeyPath.Empty,
             Value = amount,
             Coin = new Coin(outPoint, new TxOut(amount, scriptPubKey)),
             Timestamp = DateTimeOffset.UtcNow,
