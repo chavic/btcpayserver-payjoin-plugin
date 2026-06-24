@@ -32,8 +32,7 @@ internal sealed class PayjoinReceiverProposalSigner : IPayjoinReceiverProposalSi
         _explorerClientProvider = explorerClientProvider;
     }
 
-    public async Task<string> SignProposalAsync(
-        ProvisionalProposal proposal,
+    public async Task<ProcessPsbt> CreateContributedInputSignerAsync(
         string storeId,
         ReceivedCoin[] receiverCoins,
         CancellationToken cancellationToken)
@@ -63,29 +62,8 @@ internal sealed class PayjoinReceiverProposalSigner : IPayjoinReceiverProposalSi
         var signingKeySettings = derivationScheme.GetAccountKeySettingsFromRoot(signingKey) ?? throw new InvalidOperationException("Wallet key settings not available");
         var rootedKeyPath = signingKeySettings.GetRootedKeyPath() ?? throw new InvalidOperationException("Wallet key path mismatch");
         var accountKey = signingKey.Derive(rootedKeyPath.KeyPath);
-        var psbtToSign = proposal.PsbtToSign();
-        var proposalPsbt = PSBT.Parse(psbtToSign, network.NBitcoinNetwork);
 
-        var updated = await client.UpdatePSBTAsync(new NBXplorer.Models.UpdatePSBTRequest
-        {
-            PSBT = proposalPsbt,
-            DerivationScheme = derivationScheme.AccountDerivation
-        }, cancellationToken).ConfigureAwait(false);
-        if (updated?.PSBT is not null)
-        {
-            proposalPsbt = updated.PSBT;
-        }
-
-        EnsureContributedInputsPresent(proposalPsbt, receiverCoins);
-        derivationScheme.RebaseKeyPaths(proposalPsbt);
-        proposalPsbt.RebaseKeyPaths(signingKeySettings.AccountKey, rootedKeyPath);
-        proposalPsbt.SignAll(derivationScheme.AccountDerivation, accountKey, rootedKeyPath);
-        FinalizeContributedInputs(proposalPsbt, receiverCoins);
-        ClearSenderInputFinalization(proposalPsbt, receiverCoins);
-        ClearPartialSignatures(proposalPsbt);
-        ClearHdKeyPaths(proposalPsbt);
-
-        return proposalPsbt.ToBase64();
+        return new ContributedInputSigner(network.NBitcoinNetwork, accountKey, receiverCoins);
     }
 
     public static void EnsureContributedInputsPresent(PSBT proposalPsbt, ReceivedCoin[] receiverCoins)
@@ -103,60 +81,42 @@ internal sealed class PayjoinReceiverProposalSigner : IPayjoinReceiverProposalSi
         throw new InvalidOperationException($"Provisional proposal is missing contributed receiver inputs: {string.Join(", ", missingInputs)}");
     }
 
-    private static void FinalizeContributedInputs(PSBT proposalPsbt, ReceivedCoin[] receiverCoins)
+    // Signs only the receiver's contributed inputs on the PSBT that rust-payjoin hands to the wallet during
+    // finalize_proposal. That PSBT already has the sender's now-invalid signatures cleared by the library
+    // (psbt_to_sign), and the library's prepare_psbt drops partial signatures and key paths afterwards. So the
+    // receiver never signs a foreign input and no manual stripping is required. The account key is resolved
+    // ahead of time (CreateContributedInputSignerAsync) because this callback is synchronous.
+    internal sealed class ContributedInputSigner : ProcessPsbt
     {
-        // TODO: Collapse the receiver-input finalization and sender-input cleanup steps into a single proposal-normalization pipeline if this PSBT policy grows further.
-        foreach (var input in proposalPsbt.Inputs)
+        private readonly Network _network;
+        private readonly ExtKey _accountKey;
+        private readonly ReceivedCoin[] _receiverCoins;
+
+        public ContributedInputSigner(Network network, ExtKey accountKey, ReceivedCoin[] receiverCoins)
         {
-            if (!IsContributedReceiverInput(input.PrevOut, receiverCoins))
+            _network = network;
+            _accountKey = accountKey;
+            _receiverCoins = receiverCoins;
+        }
+
+        public string Callback(string psbt)
+        {
+            var proposalPsbt = PSBT.Parse(psbt, _network);
+            EnsureContributedInputsPresent(proposalPsbt, _receiverCoins);
+
+            foreach (var coin in _receiverCoins)
             {
-                continue;
+                var contributedInput = proposalPsbt.Inputs.FindIndexedInput(coin.OutPoint)!;
+
+                contributedInput.UpdateFromCoin(coin.Coin);
+                contributedInput.Sign(_accountKey.Derive(coin.KeyPath).PrivateKey);
+                if (!contributedInput.TryFinalizeInput(out _))
+                {
+                    throw new InvalidOperationException($"Receiver input '{coin.OutPoint}' could not be finalized.");
+                }
             }
 
-            if (!input.TryFinalizeInput(out _))
-            {
-                throw new InvalidOperationException($"Receiver input '{input.PrevOut}' could not be finalized.");
-            }
-        }
-    }
-
-    public static void ClearSenderInputFinalization(PSBT proposalPsbt, ReceivedCoin[] receiverCoins)
-    {
-        foreach (var input in proposalPsbt.Inputs)
-        {
-            if (IsContributedReceiverInput(input.PrevOut, receiverCoins))
-            {
-                continue;
-            }
-
-            input.FinalScriptSig = null;
-            input.FinalScriptWitness = null;
-        }
-    }
-
-    private static bool IsContributedReceiverInput(NBitcoin.OutPoint prevOut, ReceivedCoin[] receiverCoins)
-    {
-        return receiverCoins.Any(receiverCoin => receiverCoin.OutPoint == prevOut);
-    }
-
-    public static void ClearPartialSignatures(PSBT proposalPsbt)
-    {
-        foreach (var input in proposalPsbt.Inputs)
-        {
-            input.PartialSigs.Clear();
-        }
-    }
-
-    public static void ClearHdKeyPaths(PSBT proposalPsbt)
-    {
-        foreach (var input in proposalPsbt.Inputs)
-        {
-            input.HDKeyPaths.Clear();
-        }
-
-        foreach (var output in proposalPsbt.Outputs)
-        {
-            output.HDKeyPaths.Clear();
+            return proposalPsbt.ToBase64();
         }
     }
 }
