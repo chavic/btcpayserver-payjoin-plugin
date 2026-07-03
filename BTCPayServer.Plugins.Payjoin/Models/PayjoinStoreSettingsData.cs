@@ -14,6 +14,8 @@ public sealed class PayjoinStoreSettingsData
 
     public string? ColdWalletDerivationScheme { get; set; }
 
+    public long? MaxFeeRateSatPerVb { get; set; }
+
     internal IReadOnlyList<Uri?> GetInvalidDirectoryUrls()
     {
         return GetInvalidUrls(DirectoryUrls);
@@ -31,7 +33,8 @@ public sealed class PayjoinStoreSettingsData
             PayjoinV2Enabled = PayjoinV2Enabled,
             DirectoryUrls = PayjoinStoreSettings.NormalizeDirectoryUrls(DirectoryUrls),
             OhttpRelayUrls = PayjoinStoreSettings.NormalizeOhttpRelayUrls(OhttpRelayUrls),
-            ColdWalletDerivationScheme = coldWalletDerivationScheme ?? ColdWalletDerivationScheme
+            ColdWalletDerivationScheme = coldWalletDerivationScheme ?? ColdWalletDerivationScheme,
+            MaxFeeRateSatPerVb = MaxFeeRateSatPerVb
         };
         settings.NormalizeUrlSettings();
         return settings;
@@ -46,7 +49,8 @@ public sealed class PayjoinStoreSettingsData
             PayjoinV2Enabled = settings.PayjoinV2Enabled,
             DirectoryUrls = settings.GetEffectiveDirectoryUrls(),
             OhttpRelayUrls = settings.GetEffectiveOhttpRelayUrls(),
-            ColdWalletDerivationScheme = settings.ColdWalletDerivationScheme
+            ColdWalletDerivationScheme = settings.ColdWalletDerivationScheme,
+            MaxFeeRateSatPerVb = settings.MaxFeeRateSatPerVb
         };
     }
 

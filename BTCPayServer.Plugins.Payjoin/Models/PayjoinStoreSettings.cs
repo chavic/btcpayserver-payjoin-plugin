@@ -33,6 +33,12 @@ public class PayjoinStoreSettings
 
     public string? ColdWalletDerivationScheme { get; set; }
 
+    /// <summary>
+    /// Maximum effective fee rate the receiver session accepts, in sat/vB. When unset, the cap is
+    /// derived from the platform's fee estimation.
+    /// </summary>
+    public long? MaxFeeRateSatPerVb { get; set; }
+
     public IReadOnlyList<Uri> GetEffectiveDirectoryUrls()
     {
         var directoryUrls = NormalizeUrls(DirectoryUrls);

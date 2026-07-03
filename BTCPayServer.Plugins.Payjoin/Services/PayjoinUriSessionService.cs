@@ -38,6 +38,7 @@ public sealed class PayjoinUriSessionService
     private readonly PayjoinAvailabilityService _availabilityService;
     private readonly PayjoinSessionBuildLock _sessionBuildLock;
     private readonly IPayjoinAccountingBridgeService _accountingBridgeService;
+    private readonly IPayjoinFeeRateProvider _feeRateProvider;
     private readonly ILogger<PayjoinUriSessionService> _logger;
 
     internal PayjoinUriSessionService(
@@ -47,6 +48,7 @@ public sealed class PayjoinUriSessionService
         PayjoinAvailabilityService availabilityService,
         PayjoinSessionBuildLock sessionBuildLock,
         IPayjoinAccountingBridgeService accountingBridgeService,
+        IPayjoinFeeRateProvider feeRateProvider,
         ILogger<PayjoinUriSessionService> logger)
     {
         _networkProvider = networkProvider;
@@ -55,6 +57,7 @@ public sealed class PayjoinUriSessionService
         _availabilityService = availabilityService;
         _sessionBuildLock = sessionBuildLock;
         _accountingBridgeService = accountingBridgeService;
+        _feeRateProvider = feeRateProvider;
         _logger = logger;
     }
 
@@ -140,8 +143,9 @@ public sealed class PayjoinUriSessionService
                     return LogUnexpectedFallbackAndReturnBip21(bip21, invoiceId, "OHTTP keys are unavailable from all configured relays");
                 }
 
+                var maxEffectiveFeeRateSatPerVb = await _feeRateProvider.GetMaxEffectiveFeeRateSatPerVbAsync(storeId, cancellationToken).ConfigureAwait(false);
                 var bootstrapPersister = new CapturingReceiverSessionPersister();
-                InitializeSession(destination, due, selectedRelay.DirectoryUrl.AbsoluteUri, selectedRelay.OhttpKeys, monitoringExpiresAt, bootstrapPersister);
+                InitializeSession(destination, due, selectedRelay.DirectoryUrl.AbsoluteUri, selectedRelay.OhttpKeys, monitoringExpiresAt, maxEffectiveFeeRateSatPerVb, bootstrapPersister);
                 session = _receiverSessionStore.CreateSession(
                     invoiceId,
                     destination,
@@ -178,17 +182,13 @@ public sealed class PayjoinUriSessionService
         }
     }
 
-    // TODO (M1 follow-up): replace this fixed cap with NBXplorer fee estimation and/or a per-store setting.
-    // The receiver only pays the additional fee on its own contributed input/output, so a generous cap
-    // avoids silently failing payjoin in high-fee environments while bounding griefing to that contribution.
-    private const ulong DefaultMaxEffectiveFeeRateSatPerVb = 1000;
-
     private static void InitializeSession(
         string destination,
         decimal due,
         string directoryUrl,
         OhttpKeys ohttpKeys,
         DateTimeOffset monitoringExpiresAt,
+        ulong maxEffectiveFeeRateSatPerVb,
         JsonReceiverSessionPersister persister)
     {
         var amountSats = checked((ulong)Money.Coins(due).Satoshi);
@@ -196,7 +196,7 @@ public sealed class PayjoinUriSessionService
         using var receiverBuilder = new ReceiverBuilder(destination, directoryUrl, ohttpKeys);
         using var builderWithAmount = receiverBuilder.WithAmount(amountSats);
         using var builderWithExpiration = builderWithAmount.WithExpiration(expirationSecs);
-        using var builderWithMaxFeeRate = builderWithExpiration.WithMaxFeeRate(DefaultMaxEffectiveFeeRateSatPerVb);
+        using var builderWithMaxFeeRate = builderWithExpiration.WithMaxFeeRate(maxEffectiveFeeRateSatPerVb);
         using var transition = builderWithMaxFeeRate.Build();
         using var savedSession = transition.Save(persister);
     }
