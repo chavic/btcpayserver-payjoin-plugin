@@ -88,7 +88,7 @@ else
                             }
                             else if (session.CanCancel)
                             {
-                                <form method="post" asp-action="Cancel" asp-route-storeId="@Model.StoreId" asp-route-senderSessionId="@session.SenderSessionId">
+                                <form method="post" asp-action="PayNow" asp-route-storeId="@Model.StoreId" asp-route-senderSessionId="@session.SenderSessionId">
                                     <button type="submit" class="btn btn-link btn-sm p-0" text-translate="true">Pay now without payjoin</button>
                                     <div class="text-muted small" text-translate="true">
                                         The receiver already holds the signed payment, so it cannot be cancelled.

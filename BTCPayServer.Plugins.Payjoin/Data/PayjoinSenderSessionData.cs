@@ -54,6 +54,9 @@ internal class PayjoinSenderSessionData
     // copy means the operator can always fall back to the plain payment.
     public string? OriginalTransactionHex { get; set; }
 
+    // Set BEFORE any relay POST or payment broadcast. A lost response cannot un-share a payment.
+    public bool PaymentExposed { get; set; }
+
     // The base URL of the request that started this session. A background poller has no
     // HttpContext, so it cannot derive one, and the second signing round still needs to create
     // a pending transaction. BTCPay stores the same thing on the pending transaction itself.

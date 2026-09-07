@@ -1,7 +1,7 @@
-using BTCPayServer.Client;
 using BTCPayServer.Plugins.Payjoin.Controllers;
 using BTCPayServer.Plugins.Wallets;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.Extensions.DependencyInjection;
 using System.Reflection;
 using Xunit;
 
@@ -15,6 +15,12 @@ namespace BTCPayServer.Plugins.Payjoin.Tests;
 public class PayjoinSenderControllerPolicyTests
 {
     [Fact]
+    public void MvcCanBuildTheControllerActivator()
+    {
+        Assert.NotNull(ActivatorUtilities.CreateFactory(typeof(UIPayjoinSenderController), Type.EmptyTypes));
+    }
+
+    [Fact]
     public void TheControllerClassRequiresNoPolicy()
     {
         var attribute = Assert.Single(typeof(UIPayjoinSenderController).GetCustomAttributes<AuthorizeAttribute>(inherit: false));
@@ -22,25 +28,23 @@ public class PayjoinSenderControllerPolicyTests
     }
 
     [Fact]
-    public void SendingFromTheWalletNeedsOnlyTheWalletPermission()
+    public void SendingAuthorizesTheAutomaticSigningAndBroadcast()
     {
-        // A user who may create wallet transactions must be able to send an async payjoin, and
-        // must not need the store-settings permission on top of it.
-        Assert.Equal([WalletPolicies.CanCreateWalletTransactions], EffectivePolicies(nameof(UIPayjoinSenderController.SendFromWallet)));
+        Assert.Equal([WalletPolicies.CanCreateWalletTransactions, WalletPolicies.CanSignWalletTransactions,
+            WalletPolicies.CanBroadcastWalletTransactions], EffectivePolicies(nameof(UIPayjoinSenderController.SendFromWallet)));
     }
 
     [Fact]
-    public void StoppingASessionNeedsOnlyTheWalletPermission()
+    public void CancelAndPayNowRequireTheirOwnPermissions()
     {
-        // Stopping a payjoin broadcasts the plain payment, so it carries the same permission as
-        // starting one.
-        Assert.Equal([WalletPolicies.CanCreateWalletTransactions], EffectivePolicies(nameof(UIPayjoinSenderController.Cancel)));
+        Assert.Equal([WalletPolicies.CanCancelWalletTransactions], EffectivePolicies(nameof(UIPayjoinSenderController.Cancel)));
+        Assert.Equal([WalletPolicies.CanBroadcastWalletTransactions], EffectivePolicies(nameof(UIPayjoinSenderController.PayNow)));
     }
 
     [Fact]
-    public void TheSessionsPageNeedsTheStoreSettingsPermission()
+    public void TheSessionsPageNeedsOnlyWalletReadAccess()
     {
-        Assert.Equal([Policies.CanModifyStoreSettings], EffectivePolicies(nameof(UIPayjoinSenderController.Send)));
+        Assert.Equal([WalletPolicies.CanViewWallet], EffectivePolicies(nameof(UIPayjoinSenderController.Send)));
     }
 
     private static string[] EffectivePolicies(string actionName)

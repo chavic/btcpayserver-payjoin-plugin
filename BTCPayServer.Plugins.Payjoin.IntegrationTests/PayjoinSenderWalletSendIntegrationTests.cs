@@ -294,19 +294,46 @@ public class PayjoinSenderWalletSendIntegrationTests : UnitTestBase
         Assert.Empty(pending);
     }
 
+    [Fact]
+    [Trait("Integration", "Integration")]
+    public async Task StaleCleanupCancelsTheCurrentCoreSigningRequestBeforeUnlinkingIt()
+    {
+        using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
+        using var tester = CreateServerTester(newDb: true);
+        var context = await PayjoinAccountTestHelper.CreateInitializedTestContextAsync(tester, cancellationToken: cts.Token).ConfigureAwait(true);
+        await tester.PayTester.ServiceProvider.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+            .OfType<PayjoinSenderPoller>().Single().StopAsync(cts.Token).ConfigureAwait(true);
+        var pending = tester.PayTester.GetService<BTCPayServer.HostedServices.PendingTransactionService>();
+        var store = tester.PayTester.GetService<PayjoinSenderSessionStore>();
+        var storeId = context.Merchant.StoreId;
+        var psbt = PSBT.Parse(global::Payjoin.PayjoinMethods.OriginalPsbt(), context.Network.NBitcoinNetwork);
+        var a = await pending.CreatePendingTransaction(storeId, PayjoinConstants.BitcoinCode, psbt,
+            TestRequestBaseUrl, cancellationToken: cts.Token).ConfigureAwait(true);
+        var b = await pending.CreatePendingTransaction(storeId, PayjoinConstants.BitcoinCode, psbt,
+            TestRequestBaseUrl, cancellationToken: cts.Token).ConfigureAwait(true);
+        var stale = store.CreateSession("cleanup", storeId, "bitcoin:cleanup", "test", 1000, "original", [],
+            status: PayjoinSenderSessionStatus.AwaitingSignature, pendingTransactionId: a.Id);
+        Assert.True(store.StartSignedSession("cleanup", ["bootstrap"], "00"));
+        Assert.True(store.AwaitSignature("cleanup", b.Id));
+        Assert.True(store.CompleteSession("cleanup", PayjoinSenderSessionStatus.Failed, null, "test"));
+
+        await PayjoinSenderSessionResourceReleaser.ReleaseAsync(pending, store, stale).ConfigureAwait(true);
+
+        foreach (var id in new[] { a.Id, b.Id })
+        {
+            var row = await pending.GetPendingTransaction(new BTCPayServer.HostedServices.PendingTransactionService.PendingTransactionFullId(
+                PayjoinConstants.BitcoinCode, storeId, id)).ConfigureAwait(true);
+            Assert.Equal(PendingTransactionState.Cancelled, row!.State);
+        }
+        Assert.True(store.TryGetSession("cleanup", out var released));
+        Assert.Null(released!.PendingTransactionId);
+        Assert.Null(released.CoinReservationTransactionId);
+        Assert.Empty(store.GetSessionsWithDanglingResources());
+    }
+
     private static UIPayjoinSenderController CreateController(ServerTester tester)
     {
-        var provider = tester.PayTester.ServiceProvider.GetRequiredService<IServiceScopeFactory>().CreateScope().ServiceProvider;
-        var controller = new UIPayjoinSenderController(
-            provider.GetRequiredService<PayjoinSenderService>(),
-            provider.GetRequiredService<PayjoinSenderSessionStore>(),
-            provider.GetRequiredService<IPayjoinSenderSessionProcessor>(),
-            provider.GetRequiredService<WalletRepository>());
-
-        var httpContext = new DefaultHttpContext { RequestServices = provider };
-        httpContext.Request.Scheme = "http";
-        httpContext.Request.Host = new HostString("127.0.0.1");
-        controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+        var controller = tester.PayTester.GetController<UIPayjoinSenderController>();
         // The status messages this action sets go through the layout's URL helper, which needs an
         // action context the plugin never builds itself.
         controller.Url = new UrlHelperMock(new Uri("http://127.0.0.1/"));

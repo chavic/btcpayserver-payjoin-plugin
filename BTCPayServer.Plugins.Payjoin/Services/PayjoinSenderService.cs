@@ -48,7 +48,7 @@ internal sealed record PayjoinSenderStartResult(
 /// original transaction never touches the network here; it is the fallback the poller broadcasts
 /// when the payjoin does not complete.
 /// </summary>
-internal sealed class PayjoinSenderService
+public sealed class PayjoinSenderService
 {
     // Relay floor for the payjoin round, expressed the way the library wants it:
     // 250 sat/kWU equals 1 sat/vB.
@@ -76,8 +76,6 @@ internal sealed class PayjoinSenderService
     // holds them. TODO: consider making this a store setting.
     internal static readonly TimeSpan SignatureWindow = TimeSpan.FromDays(7);
 
-    private sealed record ServerSigner(ExtKey AccountKey, RootedKeyPath RootedKeyPath);
-
     private static readonly Action<ILogger, string, string, Exception?> LogSenderSessionStarted =
         LoggerMessage.Define<string, string>(
             LogLevel.Information,
@@ -99,7 +97,7 @@ internal sealed class PayjoinSenderService
     private readonly PayjoinSessionBuildLock _sessionBuildLock;
     private readonly ILogger<PayjoinSenderService> _logger;
 
-    internal PayjoinSenderService(
+    public PayjoinSenderService(
         BTCPayNetworkProvider networkProvider,
         StoreRepository storeRepository,
         PaymentMethodHandlerDictionary handlers,
@@ -125,7 +123,7 @@ internal sealed class PayjoinSenderService
     /// The coins the operator picked, when they came through BTCPay's own send screen with coin
     /// selection open. Empty means the wallet chooses.
     /// </param>
-    public async Task<PayjoinSenderStartResult> StartAsync(
+    internal async Task<PayjoinSenderStartResult> StartAsync(
         string storeId,
         string bip21,
         decimal? feeRateSatPerVb,
@@ -290,7 +288,7 @@ internal sealed class PayjoinSenderService
         }
 
         var senderSessionId = Guid.NewGuid().ToString("N");
-        var signer = await TryResolveServerSignerAsync(derivationScheme, network, cancellationToken).ConfigureAwait(false);
+        var signer = await PayjoinSenderWallet.ResolveSignerAsync(explorerClient, derivationScheme, network, cancellationToken).ConfigureAwait(false);
         if (signer is null)
         {
             // No key on the server: hand the transaction to BTCPay's pending transactions, where
@@ -443,41 +441,6 @@ internal sealed class PayjoinSenderService
                 PayjoinConstants.BitcoinCode,
                 storeId,
                 pendingTransactionId));
-    }
-
-    /// <summary>
-    /// Returns the account key when the server holds one, and null when it does not. A null
-    /// answer is the normal case for a cold wallet, a hardware device or a multisig group, and
-    /// it routes the transaction to BTCPay's pending transactions instead.
-    /// </summary>
-    private async Task<ServerSigner?> TryResolveServerSignerAsync(
-        DerivationSchemeSettings derivationScheme,
-        BTCPayNetwork network,
-        CancellationToken cancellationToken)
-    {
-        if (!derivationScheme.IsHotWallet)
-        {
-            return null;
-        }
-
-        var explorerClient = _explorerClientProvider.GetExplorerClient(network);
-        var signingKeyStr = await explorerClient.GetMetadataAsync<string>(
-            derivationScheme.AccountDerivation,
-            WellknownMetadataKeys.MasterHDKey,
-            cancellationToken).ConfigureAwait(false);
-        if (signingKeyStr is null)
-        {
-            return null;
-        }
-
-        var signingKey = ExtKey.Parse(signingKeyStr, network.NBitcoinNetwork);
-        var rootedKeyPath = derivationScheme.GetAccountKeySettingsFromRoot(signingKey)?.GetRootedKeyPath();
-        if (rootedKeyPath is null)
-        {
-            return null;
-        }
-
-        return new ServerSigner(signingKey.Derive(rootedKeyPath.KeyPath), rootedKeyPath);
     }
 
     private async Task<List<NBitcoin.OutPoint>> GetCommittedOutpointsAsync(string storeId, BTCPayNetwork network)

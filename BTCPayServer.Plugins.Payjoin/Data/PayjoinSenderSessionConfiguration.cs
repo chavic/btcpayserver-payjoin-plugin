@@ -29,6 +29,9 @@ internal sealed class PayjoinSenderSessionConfiguration : IEntityTypeConfigurati
         // a save carries "where status is still what I read" and a late writer loses instead of
         // overwriting a terminal state. This is model metadata only; the schema is unchanged.
         entity.Property(x => x.Status).IsConcurrencyToken();
+        entity.Property(x => x.PaymentExposed).IsConcurrencyToken();
+        entity.Property(x => x.PendingTransactionId).IsConcurrencyToken();
+        entity.Property(x => x.CoinReservationTransactionId).IsConcurrencyToken();
         // One live session per URI per store, enforced where the in-process build lock cannot
         // reach: across processes and across restarts. The filter is raw SQL, so the statuses
         // are spelled from the enum rather than as magic values.

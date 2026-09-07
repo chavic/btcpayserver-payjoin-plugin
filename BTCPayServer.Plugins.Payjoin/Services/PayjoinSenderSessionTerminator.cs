@@ -49,6 +49,8 @@ internal static class PayjoinSenderSessionTerminator
 
         if (session.OriginalTransactionHex is null)
         {
+            if (session.PaymentExposed)
+                return PayjoinSenderTerminalOutcome.RetryLater;
             return await CompleteAsync(
                 senderSessionStore, pendingTransactionService, session,
                 PayjoinSenderSessionStatus.Failed, broadcastTransactionId: null, reason).ConfigureAwait(false);
@@ -61,11 +63,16 @@ internal static class PayjoinSenderSessionTerminator
         }
         catch (FormatException)
         {
+            if (session.PaymentExposed)
+                return PayjoinSenderTerminalOutcome.RetryLater;
             return await CompleteAsync(
                 senderSessionStore, pendingTransactionService, session,
                 PayjoinSenderSessionStatus.Failed, broadcastTransactionId: null,
                 $"{reason}; the stored fallback could not be parsed").ConfigureAwait(false);
         }
+
+        if (!senderSessionStore.TryMarkPaymentExposed(session.SenderSessionId))
+            return PayjoinSenderTerminalOutcome.RetryLater;
 
         try
         {
@@ -101,9 +108,8 @@ internal static class PayjoinSenderSessionTerminator
         string? broadcastTransactionId,
         string? failureMessage)
     {
-        senderSessionStore.CompleteSession(session.SenderSessionId, status, broadcastTransactionId, failureMessage);
         await PayjoinSenderSessionResourceReleaser
-            .ReleaseAsync(pendingTransactionService, senderSessionStore, session).ConfigureAwait(false);
+            .CompleteAsync(pendingTransactionService, senderSessionStore, session, status, broadcastTransactionId, failureMessage).ConfigureAwait(false);
         return status == PayjoinSenderSessionStatus.CompletedFallback
             ? PayjoinSenderTerminalOutcome.FallbackBroadcast
             : PayjoinSenderTerminalOutcome.Failed;

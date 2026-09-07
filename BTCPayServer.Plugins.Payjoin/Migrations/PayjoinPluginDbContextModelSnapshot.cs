@@ -290,6 +290,7 @@ namespace BTCPayServer.Plugins.Payjoin.Migrations
                         .HasColumnType("character varying(64)");
 
                     b.Property<string>("CoinReservationTransactionId")
+                        .IsConcurrencyToken()
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
@@ -308,6 +309,10 @@ namespace BTCPayServer.Plugins.Payjoin.Migrations
                     b.Property<long>("FeeRateSatPerKwu")
                         .HasColumnType("bigint");
 
+                    b.Property<bool>("PaymentExposed")
+                        .IsConcurrencyToken()
+                        .HasColumnType("boolean");
+
                     b.Property<string>("OriginalTransactionHex")
                         .HasColumnType("text");
 
@@ -321,6 +326,7 @@ namespace BTCPayServer.Plugins.Payjoin.Migrations
                         .HasColumnType("text[]");
 
                     b.Property<string>("PendingTransactionId")
+                        .IsConcurrencyToken()
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
