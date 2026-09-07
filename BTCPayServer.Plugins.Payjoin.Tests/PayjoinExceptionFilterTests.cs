@@ -29,7 +29,7 @@ public class PayjoinExceptionFilterTests
         Assert.Equal(StatusCodes.Status500InternalServerError, result.StatusCode);
         var error = Assert.IsType<GreenfieldAPIError>(result.Value);
         Assert.Equal("internal-error", error.Code);
-        Assert.Contains("boom", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("boom", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

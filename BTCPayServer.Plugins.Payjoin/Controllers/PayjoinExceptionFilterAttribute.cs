@@ -59,7 +59,7 @@ internal sealed class PayjoinExceptionFilterAttribute : ExceptionFilterAttribute
             LogUnhandledActionException(logger, context.ActionDescriptor.DisplayName ?? "unknown", context.Exception);
         }
 
-        var message = $"Async payjoin could not complete the action: {context.Exception.Message}";
+        const string message = "Async payjoin could not complete the action. Please try again or contact the server administrator.";
         context.Result = Shape == PayjoinErrorShape.Json
             ? new ObjectResult(new GreenfieldAPIError("internal-error", message)) { StatusCode = StatusCodes.Status500InternalServerError }
             : RedirectWithStatus(context, message);

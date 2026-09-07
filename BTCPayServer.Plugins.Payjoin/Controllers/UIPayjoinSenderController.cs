@@ -31,7 +31,7 @@ public class UIPayjoinSenderController : Controller
     private readonly IPayjoinSenderSessionProcessor _senderSessionProcessor;
     private readonly WalletRepository _walletRepository;
 
-    internal UIPayjoinSenderController(
+    public UIPayjoinSenderController(
         PayjoinSenderService senderService,
         PayjoinSenderSessionStore senderSessionStore,
         IPayjoinSenderSessionProcessor senderSessionProcessor,
@@ -50,9 +50,10 @@ public class UIPayjoinSenderController : Controller
     /// round with a receiver who is not online.
     /// </summary>
     [HttpPost("from-wallet")]
-    // The operator arrives from BTCPay's send screen, so this asks for the permission that
-    // screen asks for.
+    // This action authorizes an automatic payment, including its later signing and broadcast.
     [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = WalletPolicies.CanCreateWalletTransactions)]
+    [Authorize(Policy = WalletPolicies.CanSignWalletTransactions)]
+    [Authorize(Policy = WalletPolicies.CanBroadcastWalletTransactions)]
     public async Task<IActionResult> SendFromWallet(string storeId, WalletSendModel model, string? asyncPayjoinBip21, CancellationToken cancellationToken)
     {
         System.ArgumentNullException.ThrowIfNull(model);
@@ -185,7 +186,7 @@ public class UIPayjoinSenderController : Controller
     }
 
     [HttpGet]
-    [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = Policies.CanModifyStoreSettings)]
+    [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = WalletPolicies.CanViewWallet)]
     public IActionResult Send(string storeId)
     {
         return View(BuildViewModel(storeId));
@@ -223,28 +224,29 @@ public class UIPayjoinSenderController : Controller
     }
 
     [HttpPost("{senderSessionId}/cancel")]
-    // Stopping a payjoin broadcasts the plain payment, so it is a wallet operation, not a
-    // settings one: whoever may start these payments may also stop them.
-    [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = WalletPolicies.CanCreateWalletTransactions)]
+    [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = WalletPolicies.CanCancelWalletTransactions)]
     public async Task<IActionResult> Cancel(string storeId, string senderSessionId, CancellationToken cancellationToken)
     {
         var result = await _senderSessionProcessor
             .CancelAsync(storeId, senderSessionId, cancellationToken)
             .ConfigureAwait(false);
-        if (!result.Success)
-        {
-            TempData.SetStatusMessageModel(new StatusMessageModel
-            {
-                Severity = StatusMessageModel.StatusSeverity.Error,
-                Message = result.Error
-            });
-            return RedirectToAction(nameof(Send), new { storeId });
-        }
+        return RedirectAfterStop(storeId, result);
+    }
 
+    [HttpPost("{senderSessionId}/pay-now")]
+    [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = WalletPolicies.CanBroadcastWalletTransactions)]
+    public async Task<IActionResult> PayNow(string storeId, string senderSessionId, CancellationToken cancellationToken)
+    {
+        var result = await _senderSessionProcessor.PayNowAsync(storeId, senderSessionId, cancellationToken).ConfigureAwait(false);
+        return RedirectAfterStop(storeId, result);
+    }
+
+    private IActionResult RedirectAfterStop(string storeId, PayjoinSenderCancelResult result)
+    {
         TempData.SetStatusMessageModel(new StatusMessageModel
         {
-            Severity = StatusMessageModel.StatusSeverity.Success,
-            Message = result.BroadcastTransactionId is null
+            Severity = result.Success ? StatusMessageModel.StatusSeverity.Success : StatusMessageModel.StatusSeverity.Error,
+            Message = !result.Success ? result.Error : result.BroadcastTransactionId is null
                 ? "The payment was cancelled. Nothing was broadcast, so the coins are free again."
                 : $"The payjoin was skipped and the plain payment was broadcast as {result.BroadcastTransactionId}."
         });
@@ -279,7 +281,7 @@ public class UIPayjoinSenderController : Controller
                     CanCancel = x.Status is PayjoinSenderSessionStatus.Pending
                         or PayjoinSenderSessionStatus.AwaitingSignature,
                     PaymentShared = (x.Status is PayjoinSenderSessionStatus.Pending
-                        or PayjoinSenderSessionStatus.AwaitingSignature) && _senderSessionProcessor.HasBeenShared(x),
+                        or PayjoinSenderSessionStatus.AwaitingSignature) && x.PaymentExposed,
                     BroadcastTransactionId = x.BroadcastTransactionId,
                     FailureMessage = x.FailureMessage,
                     CreatedAt = x.CreatedAt

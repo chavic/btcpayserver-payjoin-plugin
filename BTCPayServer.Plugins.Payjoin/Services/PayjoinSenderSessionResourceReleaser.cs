@@ -1,4 +1,6 @@
 using BTCPayServer.HostedServices;
+using BTCPayServer.Plugins.Payjoin.Data;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace BTCPayServer.Plugins.Payjoin.Services;
@@ -17,34 +19,39 @@ namespace BTCPayServer.Plugins.Payjoin.Services;
 /// </summary>
 internal static class PayjoinSenderSessionResourceReleaser
 {
+    internal static async Task CompleteAsync(
+        PendingTransactionService pendingTransactionService,
+        PayjoinSenderSessionStore senderSessionStore,
+        PayjoinSenderSessionState session,
+        PayjoinSenderSessionStatus status,
+        string? broadcastTransactionId,
+        string? failureMessage)
+    {
+        senderSessionStore.CompleteSession(session.SenderSessionId, status, broadcastTransactionId, failureMessage);
+        await ReleaseAsync(pendingTransactionService, senderSessionStore, session).ConfigureAwait(false);
+    }
+
     internal static async Task ReleaseAsync(
         PendingTransactionService pendingTransactionService,
         PayjoinSenderSessionStore senderSessionStore,
         PayjoinSenderSessionState session)
     {
-        if (session.PendingTransactionId is null && session.CoinReservationTransactionId is null)
+        if (!senderSessionStore.TryGetSession(session.SenderSessionId, out var current) || current is null ||
+            current.Status is PayjoinSenderSessionStatus.Pending or PayjoinSenderSessionStatus.AwaitingSignature)
         {
             return;
         }
 
-        if (session.PendingTransactionId is not null)
+        foreach (var id in new[] { current.PendingTransactionId, current.CoinReservationTransactionId }
+                     .Where(id => id is not null).Distinct())
         {
             await pendingTransactionService.CancelPendingTransaction(
                 new PendingTransactionService.PendingTransactionFullId(
                     PayjoinConstants.BitcoinCode,
-                    session.StoreId,
-                    session.PendingTransactionId)).ConfigureAwait(false);
+                    current.StoreId,
+                    id!)).ConfigureAwait(false);
         }
 
-        if (session.CoinReservationTransactionId is not null)
-        {
-            await pendingTransactionService.CancelPendingTransaction(
-                new PendingTransactionService.PendingTransactionFullId(
-                    PayjoinConstants.BitcoinCode,
-                    session.StoreId,
-                    session.CoinReservationTransactionId)).ConfigureAwait(false);
-        }
-
-        senderSessionStore.ClearReleasedResources(session.SenderSessionId);
+        senderSessionStore.ClearReleasedResources(current);
     }
 }

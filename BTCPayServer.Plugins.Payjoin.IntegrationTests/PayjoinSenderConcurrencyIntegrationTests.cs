@@ -71,8 +71,8 @@ public class PayjoinSenderConcurrencyIntegrationTests : UnitTestBase
         await tester.StartAsync().WaitAsync(cts.Token).ConfigureAwait(true);
         var store = tester.PayTester.GetService<PayjoinSenderSessionStore>();
 
-        // The race is real: the signature listener and the reconcile sweep can both react to
-        // the same signed original. The status guard turns the late one away, and when both
+        // Independent workers can observe the same signed original. The status guard turns
+        // the late one away, and when both
         // pass it together, the unique (session, sequence) event index lets exactly one seed
         // the session; the loser's save rolls back and it reports false.
         CreateAwaitingSession(store, "signed-race", "bitcoin:bcrt1qsigned?amount=0.001&pj=https://example.test/#K1");
@@ -91,7 +91,7 @@ public class PayjoinSenderConcurrencyIntegrationTests : UnitTestBase
 
     [Fact]
     [Trait("Integration", "Integration")]
-    public async Task ConcurrentAppendsLeaveTheLogReplayable()
+    public async Task CompetingWritersMustReplayTheWinningStateBeforeAppending()
     {
         using var cts = new CancellationTokenSource(PayjoinIntegrationTestSupport.TestTimeout);
         using var tester = CreateServerTester(newDb: true);
@@ -99,24 +99,23 @@ public class PayjoinSenderConcurrencyIntegrationTests : UnitTestBase
         var store = tester.PayTester.GetService<PayjoinSenderSessionStore>();
 
         CreateAwaitingSession(store, "append-race", "bitcoin:bcrt1qappend?amount=0.001&pj=https://example.test/#K1");
-        var persister = store.CreatePersister("append-race");
-
-        // Two writers can append at once: the poller advancing the session and the listener
-        // handling a signature. The unique (session, sequence) index makes the order durable,
-        // and the append retries with the next sequence when it loses, so every event survives.
+        // Each writer replays the same version before any writer saves. Only one may append;
+        // a loser must recompute its transition from a fresh replay, never renumber a stale one.
         const int writerCount = 8;
-        const int eventsPerWriter = 5;
-        await Task.WhenAll(Enumerable.Range(0, writerCount).Select(writer => Task.Run(() =>
+        var persisters = Enumerable.Range(0, writerCount).Select(_ => store.CreatePersister("append-race")).ToArray();
+        var results = await Task.WhenAll(persisters.Select((persister, writer) => Task.Run(() =>
         {
-            for (var i = 0; i < eventsPerWriter; i++)
+            try
             {
-                persister.Save($"writer-{writer}-event-{i}");
+                persister.Save($"writer-{writer}");
+                return true;
             }
+            catch (Microsoft.EntityFrameworkCore.DbUpdateException) { return false; }
         }, cts.Token))).ConfigureAwait(true);
 
+        Assert.Single(results, won => won);
         Assert.True(store.TryGetSession("append-race", out var session));
-        Assert.Equal(writerCount * eventsPerWriter, session!.Events.Length);
-        Assert.Equal(writerCount * eventsPerWriter, session.Events.Distinct(StringComparer.Ordinal).Count());
+        Assert.Single(session!.Events);
     }
 
     [Fact]

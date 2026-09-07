@@ -19,7 +19,7 @@ internal sealed class PayjoinSenderPoller : BackgroundService
     private readonly IPayjoinSenderSessionProcessor _sessionProcessor;
     private readonly ILogger<PayjoinSenderPoller> _logger;
 
-    internal PayjoinSenderPoller(
+    public PayjoinSenderPoller(
         IPayjoinSenderSessionProcessor sessionProcessor,
         ILogger<PayjoinSenderPoller> logger)
     {
